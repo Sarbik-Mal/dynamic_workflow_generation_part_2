@@ -1,0 +1,12 @@
+{
+  "name": "block-builder-mcp",
+  "version": "1.0.0",
+  "description": "MCP Server for the Block Builder POC",
+  "main": "server.js",
+  "type": "module",
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.0.1",
+    "socket.io": "^4.7.5",
+    "dotenv": "^16.4.5"
+  }
+}

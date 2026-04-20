@@ -1,0 +1,86 @@
+@import "tailwindcss";
+@import "@xyflow/react/dist/style.css";
+
+:root {
+  --background: #020617;
+  --foreground: #f8fafc;
+  --surface: #0f172a;
+  --border: #1e293b;
+}
+
+body {
+  background: var(--background);
+  color: var(--foreground);
+  font-family: 'Inter', sans-serif;
+}
+
+.react-flow__node {
+  border-radius: 12px;
+  background: transparent;
+  border: none;
+  padding: 0;
+}
+
+.react-flow__handle {
+  width: 10px;
+  height: 10px;
+  background: #6366f1;
+  border: 2px solid #020617;
+}
+
+.react-flow__edge-path {
+  stroke-width: 3.5;
+  stroke: #818cf8;
+  opacity: 1;
+  filter: drop-shadow(0 0 5px rgba(129, 140, 248, 0.5));
+}
+
+.react-flow__edge.animated .react-flow__edge-path {
+  stroke: #6366f1;
+  stroke-dasharray: 5;
+  animation: react-flow__dashdraw 3s linear infinite; /* Much slower and subtle */
+  opacity: 0.8;
+}
+
+.react-flow__background {
+  background-color: #020617;
+}
+
+@keyframes pulse-subtle {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50% { opacity: 0.8; transform: scale(0.98); }
+}
+
+.animate-pulse-subtle {
+  animation: pulse-subtle 2s infinite ease-in-out;
+}
+
+@layer utilities {
+  .scrollbar-hide::-webkit-scrollbar {
+    display: none;
+  }
+  .scrollbar-hide {
+    -ms-overflow-style: none;
+    scrollbar-width: none;
+  }
+
+  .scrollbar-thin::-webkit-scrollbar {
+    width: 6px;
+  }
+  .scrollbar-thin::-webkit-scrollbar-track {
+    background: transparent;
+  }
+  .scrollbar-thin::-webkit-scrollbar-thumb {
+    background: #e2e8f0;
+    border-radius: 20px;
+  }
+  .scrollbar-thin::-webkit-scrollbar-thumb:hover {
+    background: #cbd5e1;
+  }
+}
+
+/* Custom Block Hover Effect */
+.block-3d {
+  transform-style: preserve-3d;
+  perspective: 1000px;
+}
