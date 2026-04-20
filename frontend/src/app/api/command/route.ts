@@ -1,5 +1,5 @@
 import { openai } from '@ai-sdk/openai';
-import { generateText, tool } from 'ai';
+import { generateText, tool, generateObject } from 'ai';
 import { z } from 'zod';
 import { io, Socket } from 'socket.io-client';
 import { NODE_TYPES } from '@/lib/nodes';
@@ -32,124 +32,168 @@ const connectSocket = () => {
 export async function POST(req: Request) {
   const { prompt, context } = await req.json(); // RECEIVING MEMORY
 
+  console.log('\n--- CONVERSATION HISTORY & MEMORY ---');
+  console.log('USER PROMPT:', prompt);
+
   // Summarize context for the AI
   const currentNodesSummary = context?.nodes?.map((n: any) => `- ${n.id} (${n.data?.label})`).join('\n') || 'None';
   const currentEdgesSummary = context?.edges?.map((e: any) => `- ${e.source} -> ${e.target}`).join('\n') || 'None';
 
   try {
-    const result = await generateText({
+    const { object } = await generateObject({
       model: openai('gpt-4o-mini'),
-      system: `You are the Workflow Architect with Graph Memory.
-      You can see the current canvas and build upon it or modify it.
+      system: `You are the Workflow Architect. Convert the user's exact request into a sequence of logical operations.
       
       Nodes available:
       ${Object.entries(NODE_TYPES).map(([id, n]) => `- ${id}: ${n.label} (${n.desc})`).join('\n')}
       
-      CURRENT CANVAS STATE:
-      Nodes:
-      ${currentNodesSummary}
-      
-      Edges:
-      ${currentEdgesSummary}
-      
       CRITICAL RULES:
-      1. If the user asks for a feature that already exists, don't recreate it.
-      2. When adding new nodes, ensure they are logically connected to the existing graph.
-      3. Use internally consistent IDs. If you reference an existing node, use its exact ID from the summary.
-      4. Always think in terms of the COMPLETE architecture.`,
+      1. Map the user's request strictly to the exact node types available.
+      2. Do NOT add any nodes that the user did not explicitly ask for.
+      3. For each step, specify the "node_name" (which must be a valid node type), its "source" (the node type it receives data from, or "none"), and its "target" (the node type it sends data to, or "none").
+      4. Ensure a logical directed flow from sources to sinks.`,
       prompt,
-      tools: {
-        createWorkflow: tool({
-          description: 'Add new nodes and edges to the existing workflow',
-          inputSchema: z.object({
-            nodes: z.array(z.object({
-              id: z.string().describe('Unique ID for the node'),
-              type: z.enum(Object.keys(NODE_TYPES) as [string, ...string[]]),
-            })),
-            edges: z.array(z.object({
-              source: z.string().describe('ID of the source node'),
-              target: z.string().describe('ID of the target node'),
-            })),
-          }),
-          execute: async ({ nodes, edges }) => {
-            console.log(`[Architect] Opening connection for workflow update...`);
-            
-            let socket: Socket;
-            try {
-              socket = await connectSocket();
-            } catch (err) {
-              console.error('Failed to connect socket:', err);
-              return { error: 'WebSocket connection failed' };
-            }
-
-            // Track what we've rendered in THIS session
-            const newNodes = new Set<string>();
-            // Add existing nodes to the set so we don't think they are missing context
-            context?.nodes?.forEach((n: any) => newNodes.add(n.id));
-
-            const remainingEdges = [...edges];
-
-            try {
-              for (const n of nodes) {
-                // Only emit if it doesn't already exist on canvas
-                const exists = context?.nodes?.some((existing: any) => existing.id === n.id);
-                
-                if (!exists) {
-                  const nodeInfo = NODE_TYPES[n.type as keyof typeof NODE_TYPES];
-                  socket.emit('UI_COMMAND:ADD_NODE', { 
-                    id: n.id, 
-                    type: 'workflowNode', 
-                    data: { 
-                      label: nodeInfo.label, 
-                      description: nodeInfo.desc,
-                      icon: nodeInfo.icon,
-                      color: nodeInfo.color // RESTORED COLOR
-                    } 
-                  });
-                  newNodes.add(n.id);
-                  console.log(`[Architect] Emitted Node: ${n.id}`);
-                  await new Promise(r => setTimeout(r, 800));
-                }
-
-                // Try to emit edges as nodes become available
-                let foundEdge = true;
-                while (foundEdge) {
-                  foundEdge = false;
-                  for (let i = 0; i < remainingEdges.length; i++) {
-                    const e = remainingEdges[i];
-                    if (newNodes.has(e.source) && newNodes.has(e.target)) {
-                      // Check if edge already exists
-                      const edgeExists = context?.edges?.some((ex: any) => ex.source === e.source && ex.target === e.target);
-                      if (!edgeExists) {
-                        socket.emit('UI_COMMAND:ADD_EDGE', { 
-                          id: `e-${e.source}-${e.target}`, 
-                          source: e.source, 
-                          target: e.target,
-                          animated: true 
-                        });
-                        console.log(`[Architect] Emitted Edge: ${e.source} -> ${e.target}`);
-                        await new Promise(r => setTimeout(r, 400));
-                      }
-                      remainingEdges.splice(i, 1);
-                      foundEdge = true;
-                      break; 
-                    }
-                  }
-                }
-              }
-            } finally {
-              await new Promise(r => setTimeout(r, 500));
-              socket.disconnect();
-              console.log(`[Architect] Connection closed.`);
-            }
-
-            return { success: true };
-          },
-        }),
-      },
+      schema: z.object({
+        workflow: z.array(z.object({
+          node_name: z.string(),
+          source: z.string(),
+          target: z.string()
+        }))
+      })
     });
 
-    return Response.json({ text: result.text });
+    // Double-checking loop to prevent hallucinations and unrequested nodes
+    const { object: verifiedObject } = await generateObject({
+      model: openai('gpt-4o-mini'),
+      system: `You are the strict Quality Assurance Architect. 
+      Your only job is to review a proposed workflow against the original user prompt and remove ANY nodes that the user did not explicitly request.
+      Also, remove any completely disconnected nodes (nodes where both source and target are 'none' in a multi-node graph).`,
+      prompt: `Original User Request: "${prompt}"
+      Proposed Workflow:
+      ${JSON.stringify(object.workflow, null, 2)}
+      
+      Return the corrected workflow exactly matching the original request without unrequested fluff.`,
+      schema: z.object({
+        workflow: z.array(z.object({
+          node_name: z.string(),
+          source: z.string(),
+          target: z.string()
+        }))
+      })
+    });
+
+    // Swap the original hallucinated object for the verified one
+    const finalObject = verifiedObject;
+
+    console.log('AGENT GENERATED RAW WORKFLOW:', JSON.stringify(object.workflow, null, 2));
+    console.log('QA LOOP VERIFIED WORKFLOW:', JSON.stringify(finalObject.workflow, null, 2));
+
+    // Hardcoded logic to build the workflow from the simple sequence
+    console.log(`[Architect] Opening connection for workflow update...`);
+    let socket: Socket;
+    try {
+      socket = await connectSocket();
+    } catch (err) {
+      console.error('Failed to connect socket:', err);
+      return Response.json({ error: 'WebSocket connection failed' }, { status: 500 });
+    }
+
+    try {
+      const nodeInstances = new Map<string, string>(); // Maps node_type to instance_id
+      let idCounter = 1;
+      
+      const emittedNodes = new Set<string>();
+      const emittedEdges = new Set<string>();
+      
+      // Track edges we want to draw, and draw them AS SOON as both nodes exist
+      const pendingEdges: { id: string, source: string, target: string }[] = [];
+
+      for (const step of finalObject.workflow) {
+        // Collect types mentioned in this step
+        const typesToProcess = [];
+        if (step.source && step.source !== 'none') typesToProcess.push(step.source);
+        if (step.node_name && step.node_name !== 'none') typesToProcess.push(step.node_name);
+        if (step.target && step.target !== 'none') typesToProcess.push(step.target);
+
+        // 1. Assign IDs to any newly seen nodes
+        for (const type of typesToProcess) {
+          if (!nodeInstances.has(type)) {
+            nodeInstances.set(type, `${type}_${idCounter++}`);
+          }
+        }
+
+        // 2. Register desired edges from this step
+        const currentType = step.node_name;
+        if (currentType && currentType !== 'none') {
+          const currentId = nodeInstances.get(currentType)!;
+          
+          if (step.source && step.source !== 'none') {
+            const sourceId = nodeInstances.get(step.source)!;
+            const edgeId = `e-${sourceId}-${currentId}`;
+            pendingEdges.push({ id: edgeId, source: sourceId, target: currentId });
+          }
+          if (step.target && step.target !== 'none') {
+            const targetId = nodeInstances.get(step.target)!;
+            const edgeId = `e-${currentId}-${targetId}`;
+            pendingEdges.push({ id: edgeId, source: currentId, target: targetId });
+          }
+        }
+
+        // 3. Emit nodes sequentially, immediately drawing any edges that become valid
+        for (const type of typesToProcess) {
+          const typeKey = type as keyof typeof NODE_TYPES;
+          if (!NODE_TYPES[typeKey]) continue; // Skip invalid nodes
+
+          const nodeId = nodeInstances.get(type)!;
+
+          if (!emittedNodes.has(nodeId)) {
+            const nodeInfo = NODE_TYPES[typeKey];
+            socket.emit('UI_COMMAND:ADD_NODE', { 
+              id: nodeId, 
+              type: 'workflowNode', 
+              data: { 
+                label: nodeInfo.label, 
+                description: nodeInfo.desc,
+                icon: nodeInfo.icon,
+                color: nodeInfo.color
+              } 
+            });
+            emittedNodes.add(nodeId);
+            console.log(`[Architect] Emitted Node: ${nodeId}`);
+            await new Promise(r => setTimeout(r, 600)); // Delay for node render
+
+            // Check if any pending edges can be drawn now that this node exists
+            let i = 0;
+            while (i < pendingEdges.length) {
+              const edge = pendingEdges[i];
+              if (emittedNodes.has(edge.source) && emittedNodes.has(edge.target)) {
+                if (!emittedEdges.has(edge.id)) {
+                  socket.emit('UI_COMMAND:ADD_EDGE', { 
+                    id: edge.id, 
+                    source: edge.source, 
+                    target: edge.target,
+                    animated: true 
+                  });
+                  emittedEdges.add(edge.id);
+                  console.log(`[Architect] Emitted Edge: ${edge.source} -> ${edge.target}`);
+                  await new Promise(r => setTimeout(r, 400)); // Delay for edge render
+                }
+                pendingEdges.splice(i, 1); // Remove from queue
+              } else {
+                i++;
+              }
+            }
+          }
+        }
+      }
+    } finally {
+      await new Promise(r => setTimeout(r, 500));
+      socket.disconnect();
+      console.log(`[Architect] Connection closed.`);
+    }
+
+    console.log('-------------------------------------\n');
+    return Response.json({ text: 'Workflow created successfully.' });
   } catch (error: any) {
     console.error('AI Workflow Error:', error);
     return Response.json({ error: error.message }, { status: 500 });
