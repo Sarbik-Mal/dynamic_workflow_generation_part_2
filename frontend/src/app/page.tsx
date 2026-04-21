@@ -326,6 +326,41 @@ export default function WorkflowVisualizer() {
     return workflowId;
   }, [workflowId]);
 
+  const onConnect = useCallback(
+    (params: any) => {
+      console.log('[Execution] Entering onConnect', params);
+      ensureWorkflowId();
+      
+      const newEdge: Edge = {
+        ...params,
+        id: `e-${params.source}-${params.target}`,
+        type: 'smoothstep',
+        animated: true,
+        style: { strokeWidth: 3, stroke: '#818cf8', opacity: 1 },
+      };
+
+      setEdges((eds) => addEdge(newEdge, eds));
+      
+      // Update Socket
+      socketRef.current?.emit('UI_COMMAND:ADD_EDGE', newEdge);
+      
+      // Update Memory
+      setMessages(prev => memoryManager.logAction(prev, memoryManager.formatAddEdge(params.source, params.target)));
+    },
+    [setEdges, ensureWorkflowId]
+  );
+
+  const onEdgesDelete = useCallback(
+    (deletedEdges: Edge[]) => {
+      console.log('[Execution] Entering onEdgesDelete', deletedEdges.length);
+      deletedEdges.forEach((edge) => {
+        socketRef.current?.emit('UI_COMMAND:REMOVE_EDGE', { id: edge.id });
+        setMessages(prev => memoryManager.logAction(prev, memoryManager.formatRemoveEdge(edge.source, edge.target)));
+      });
+    },
+    []
+  );
+
   const reconcileWorkflow = useCallback(async (logicalWorkflow: any[]) => {
     setIsArchitectThinking(true);
     ensureWorkflowId();
@@ -731,6 +766,8 @@ export default function WorkflowVisualizer() {
              edges={edges}
              onNodesChange={onNodesChange}
              onEdgesChange={onEdgesChange}
+             onConnect={onConnect}
+             onEdgesDelete={onEdgesDelete}
              nodeTypes={nodeTypes}
              connectionLineType={ConnectionLineType.SmoothStep}
              onInit={setRfInstance}

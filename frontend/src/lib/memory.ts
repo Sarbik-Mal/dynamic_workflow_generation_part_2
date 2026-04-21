@@ -41,6 +41,13 @@ export const memoryManager = {
   },
 
   /**
+   * Formats an edge addition action
+   */
+  formatAddEdge: (sourceId: string, targetId: string): string => {
+    return `User manually created a connection from "${sourceId}" to "${targetId}".`;
+  },
+
+  /**
    * Formats the entire current workflow JSON for memory syncing
    */
   formatCurrentState: (workflow: any[]): string => {
