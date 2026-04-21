@@ -50,7 +50,7 @@ import { twMerge } from 'tailwind-merge';
 import { io, Socket } from 'socket.io-client';
 import { getLayoutedElements } from '@/lib/layout';
 import { NODE_TYPES } from '@/lib/nodes';
-import { memoryManager } from '@/lib/memory';
+import { memoryManager, type MemoryMessage } from '@/lib/memory';
 
 /**
  * UTILITIES
@@ -153,8 +153,8 @@ const nodeTypes = {
  * MAIN PAGE COMPONENT
  */
 export default function WorkflowVisualizer() {
-  const [nodes, setNodes, onNodesChange] = useNodesState([]);
-  const [edges, setEdges, onEdgesChange] = useEdgesState([]);
+  const [nodes, setNodes, onNodesChange] = useNodesState<Node>([]);
+  const [edges, setEdges, onEdgesChange] = useEdgesState<Edge>([]);
   const [savedWorkflows, setSavedWorkflows] = useState<any[]>([]);
   const [isConnected, setIsConnected] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
@@ -162,7 +162,7 @@ export default function WorkflowVisualizer() {
   const [isArchitectThinking, setIsArchitectThinking] = useState(false);
   const [activeTab, setActiveTab] = useState<'history' | 'library'>('library');
   const [incomingQueue, setIncomingQueue] = useState<{ type: 'node' | 'edge' | 'remove_node' | 'remove_edge', data: any }[]>([]);
-  const [messages, setMessages] = useState<{role: string, content: string}[]>([]);
+  const [messages, setMessages] = useState<MemoryMessage[]>([]);
   const [workflowId, setWorkflowId] = useState<string | null>(null);
   
   const socketRef = useRef<Socket | null>(null);
@@ -208,7 +208,7 @@ export default function WorkflowVisualizer() {
       setNodes((prevNodes) => {
         const targetNode = prevNodes.find(n => n.id === id);
         if (targetNode) {
-          setMessages(prev => memoryManager.logAction(prev, memoryManager.formatRemoveNode(id, targetNode.data.label)));
+          setMessages(prev => memoryManager.logAction(prev, memoryManager.formatRemoveNode(id as string, targetNode.data.label as string)));
         }
         return prevNodes;
       });
@@ -490,7 +490,7 @@ export default function WorkflowVisualizer() {
     ensureWorkflowId();
 
     // Optimistically append the user message
-    const newMessages = [...messages, { role: 'user', content: currentCommand }];
+    const newMessages: MemoryMessage[] = [...messages, { role: 'user', content: currentCommand }];
     setMessages(newMessages);
 
     try {
