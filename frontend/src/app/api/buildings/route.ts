@@ -18,6 +18,7 @@ export async function POST(req: Request) {
     
     // Save as a new Workflow document
     const newWorkflow = await Workflow.create({
+      workflowId: body.workflowId,
       name: body.name || `Workflow ${new Date().toLocaleTimeString()}`,
       nodes: body.nodes,
       edges: body.edges,

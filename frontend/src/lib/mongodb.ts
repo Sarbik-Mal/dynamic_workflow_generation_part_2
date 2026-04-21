@@ -64,6 +64,7 @@ const EdgeSchema = new mongoose.Schema({
 });
 
 const WorkflowSchema = new mongoose.Schema({
+  workflowId: { type: String, unique: true },
   name: { type: String, default: 'Untitled Workflow' },
   nodes: [NodeSchema],
   edges: [EdgeSchema],

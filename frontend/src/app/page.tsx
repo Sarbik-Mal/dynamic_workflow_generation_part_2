@@ -162,6 +162,7 @@ export default function WorkflowVisualizer() {
   const [activeTab, setActiveTab] = useState<'history' | 'library'>('library');
   const [incomingQueue, setIncomingQueue] = useState<{ type: 'node' | 'edge' | 'remove_node' | 'remove_edge', data: any }[]>([]);
   const [messages, setMessages] = useState<{role: string, content: string}[]>([]);
+  const [workflowId, setWorkflowId] = useState<string | null>(null);
   
   const socketRef = useRef<Socket | null>(null);
 
@@ -299,6 +300,15 @@ export default function WorkflowVisualizer() {
     };
   }, [nodes.length, edges.length]);
 
+  const ensureWorkflowId = useCallback(() => {
+    if (!workflowId) {
+      const newId = window.crypto.randomUUID();
+      setWorkflowId(newId);
+      return newId;
+    }
+    return workflowId;
+  }, [workflowId]);
+
   const handleSendCommand = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!command.trim() || isArchitectThinking) return;
@@ -306,6 +316,8 @@ export default function WorkflowVisualizer() {
     const currentCommand = command;
     setCommand('');
     setIsArchitectThinking(true);
+    
+    ensureWorkflowId();
 
     // Optimistically append the user message
     const newMessages = [...messages, { role: 'user', content: currentCommand }];
@@ -346,11 +358,17 @@ export default function WorkflowVisualizer() {
       const res = await fetch('/api/buildings', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ nodes, edges, name: `Workflow ${new Date().toLocaleTimeString()}` }),
+        body: JSON.stringify({ 
+          workflowId,
+          nodes, 
+          edges, 
+          name: `Workflow ${new Date().toLocaleTimeString()}` 
+        }),
       });
       if (res.ok) {
         setNodes([]);
         setEdges([]);
+        setWorkflowId(null);
         fetchSavedWorkflows();
       }
     } catch (error) {
@@ -363,9 +381,11 @@ export default function WorkflowVisualizer() {
   const loadWorkflow = (wf: any) => {
     setNodes(wf.nodes || []);
     setEdges(wf.edges || []);
+    setWorkflowId(wf.workflowId || null);
   };
 
   const handleManualAddNode = (type: string) => {
+    ensureWorkflowId();
     const nodeInfo = NODE_TYPES[type as keyof typeof NODE_TYPES];
     const id = `${type}-${Date.now()}`;
     
@@ -525,6 +545,13 @@ export default function WorkflowVisualizer() {
               <span className="text-xs font-bold text-slate-300">Canvas Node: v4.2</span>
             </div>
             
+            {workflowId && (
+              <div className="px-3 py-1.5 bg-indigo-900/30 rounded-lg flex items-center gap-2 border border-indigo-500/30">
+                <WorkflowIcon className="w-4 h-4 text-indigo-400" />
+                <span className="text-[10px] font-mono text-indigo-300">ID: {workflowId.slice(0, 8)}...</span>
+              </div>
+            )}
+            
             <div className="h-6 w-px bg-slate-800" />
             
             <nav className="flex items-center gap-4">
@@ -542,6 +569,7 @@ export default function WorkflowVisualizer() {
                 setNodes([]); 
                 setEdges([]); 
                 setMessages([]); // Reset memory when the board is cleared
+                setWorkflowId(null);
               }}
               className="px-4 py-2 text-xs font-bold text-slate-500 hover:text-white transition-colors uppercase tracking-widest"
             >
