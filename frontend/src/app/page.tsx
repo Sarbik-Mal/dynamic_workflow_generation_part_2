@@ -50,6 +50,7 @@ import { twMerge } from 'tailwind-merge';
 import { io, Socket } from 'socket.io-client';
 import { getLayoutedElements } from '@/lib/layout';
 import { NODE_TYPES } from '@/lib/nodes';
+import { memoryManager } from '@/lib/memory';
 
 /**
  * UTILITIES
@@ -202,6 +203,16 @@ export default function WorkflowVisualizer() {
     // Listen for manual actions from custom components
     const handleManualRemoveNode = (e: any) => {
       const { id } = e.detail;
+      
+      // Update memory before emitting/deleting
+      setNodes((prevNodes) => {
+        const targetNode = prevNodes.find(n => n.id === id);
+        if (targetNode) {
+          setMessages(prev => memoryManager.logAction(prev, memoryManager.formatRemoveNode(id, targetNode.data.label)));
+        }
+        return prevNodes;
+      });
+
       socketRef.current?.emit('UI_COMMAND:REMOVE_NODE', { id });
     };
 
@@ -329,20 +340,29 @@ export default function WorkflowVisualizer() {
 
     const nodeLibrary = new Map<string, Node>();
     nodeTypesFound.forEach(type => {
-      const existingNode = nodes.find(n => n.id === type);
+      // STRICT VALIDATION: Only render nodes that exist in our actual library
       const nodeInfo = NODE_TYPES[type as keyof typeof NODE_TYPES];
+      if (!nodeInfo) {
+        console.warn(`[Architect] Skipping invalid node type: ${type}`);
+        return;
+      }
+
+      const existingNode = nodes.find(n => n.id === type);
       nodeLibrary.set(type, {
         id: type,
         type: 'workflowNode',
         position: existingNode?.position || { x: Math.random() * 400, y: Math.random() * 400 },
         data: {
-          label: nodeInfo?.label || type,
-          description: nodeInfo?.desc || '',
-          icon: nodeInfo?.icon || 'Zap',
-          color: nodeInfo?.color || 'slate-400'
+          label: nodeInfo.label,
+          description: nodeInfo.desc,
+          icon: nodeInfo.icon,
+          color: nodeInfo.color
         }
       });
     });
+
+    // Re-calculate nodesFound based on successfully created library entries
+    const validatedNodeIds = new Set(Array.from(nodeLibrary.keys()));
 
     // 2. Identify all target edges for cleanup
     const targetEdgeIds = new Set<string>();
@@ -356,7 +376,7 @@ export default function WorkflowVisualizer() {
     });
 
     // 3. Initial Cleanup (Remove obsolete elements first)
-    setNodes(prev => prev.filter(n => nodeTypesFound.has(n.id)));
+    setNodes(prev => prev.filter(n => validatedNodeIds.has(n.id)));
     setEdges(prev => prev.filter(e => targetEdgeIds.has(e.id)));
     
     await new Promise(r => setTimeout(r, 400));
@@ -504,6 +524,9 @@ export default function WorkflowVisualizer() {
     const nodeInfo = NODE_TYPES[type as keyof typeof NODE_TYPES];
     const id = `${type}-${Date.now()}`;
     
+    // Update memory for manual addition
+    setMessages(prev => memoryManager.logAction(prev, memoryManager.formatAddNode(type, nodeInfo.label)));
+
     setIncomingQueue((prev) => [...prev, { 
       type: 'node', 
       data: {

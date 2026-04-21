@@ -42,8 +42,10 @@ CRITICAL RULES:
 1. Map the user's request strictly to the exact node types available.
 2. Do NOT add any nodes that the user did not explicitly ask for.
 3. For each step, specify the "node_name" (which must be a valid node type), its "source" (the node type it receives data from, or "none"), and its "target" (the node type it sends data to, or "none").
-4. Ensure a logical directed flow from sources to sinks.
-5. Consider the conversation history to understand what nodes have already been added or modified.`;
+4. IMPORTANT: The "source" and "target" fields MUST contain exactly ONE node type ID or "none". Do NOT use commas, lists, or multiple names in a single field.
+5. If a node has multiple sources (many-to-one), create MULTIPLE separate objects in the "workflow" array for each connection.
+6. Ensure a logical directed flow from sources to sinks.
+7. Consider the conversation history and [SYSTEM_SYNC] logs to understand what nodes have already been added or manually modified by the user.`;
 
   // Combine system prompt with the ongoing conversation history
   const fullMemory = [
