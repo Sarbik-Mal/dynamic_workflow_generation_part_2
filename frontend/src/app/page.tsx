@@ -336,6 +336,7 @@ export default function WorkflowVisualizer() {
         id: `e-${params.source}-${params.target}`,
         type: 'smoothstep',
         animated: true,
+        data: { manual: true }, // Mark as manual to protect from AI pruning
         style: { strokeWidth: 3, stroke: '#818cf8', opacity: 1 },
       };
 
@@ -412,7 +413,10 @@ export default function WorkflowVisualizer() {
 
     // 3. Initial Cleanup (Remove obsolete elements first)
     setNodes(prev => prev.filter(n => validatedNodeIds.has(n.id)));
-    setEdges(prev => prev.filter(e => targetEdgeIds.has(e.id)));
+    setEdges(prev => prev.filter(e => {
+      // Keep if it's in the AI's plan OR if it was manually created
+      return targetEdgeIds.has(e.id) || e.data?.manual === true;
+    }));
     
     await new Promise(r => setTimeout(r, 400));
 
@@ -471,6 +475,8 @@ export default function WorkflowVisualizer() {
       }
     }
 
+    // Final pause before completing
+    await new Promise(r => setTimeout(r, 1000));
     setIsArchitectThinking(false);
   }, [nodes, edges]);
 
@@ -488,9 +494,22 @@ export default function WorkflowVisualizer() {
     setIsArchitectThinking(true);
     
     ensureWorkflowId();
+    
+    // SYNC: Inject the absolute source of truth (current JSON) into history 
+    // so the Architect doesn't have to guess from the logs.
+    const currentLogicalState = nodes.map(n => {
+      const edge = edges.find(e => e.target === n.id);
+      return { 
+        node_name: n.id, 
+        source: edge?.source || 'none',
+        target: 'none' // The AI will recalculate targets
+      };
+    });
+    
+    const messagesWithSync = memoryManager.logAction(messages, memoryManager.formatCurrentState(currentLogicalState));
 
     // Optimistically append the user message
-    const newMessages: MemoryMessage[] = [...messages, { role: 'user', content: currentCommand }];
+    const newMessages: MemoryMessage[] = [...messagesWithSync, { role: 'user', content: currentCommand }];
     setMessages(newMessages);
 
     try {
@@ -516,9 +535,9 @@ export default function WorkflowVisualizer() {
       }
     } catch (error) {
       console.error('Failed to send command:', error);
-    } finally {
-      setIsArchitectThinking(false);
-    }
+      setIsArchitectThinking(false); // Clear on error
+    } 
+    // Removed finally { setIsArchitectThinking(false) } to let reconcileWorkflow handle it
   };
 
   const handleSaveWorkflow = async () => {
@@ -557,7 +576,12 @@ export default function WorkflowVisualizer() {
   const handleManualAddNode = (type: string) => {
     ensureWorkflowId();
     const nodeInfo = NODE_TYPES[type as keyof typeof NODE_TYPES];
-    const id = `${type}-${Date.now()}`;
+    
+    // Harmonize: Use the type-name as the ID (e.g. 'sql_source') 
+    // so the AI can reconcile with it later. 
+    // For uniqueness, we only add a suffix if it already exists.
+    const existingCount = nodes.filter(n => n.id.startsWith(type)).length;
+    const id = existingCount > 0 ? `${type}_${existingCount + 1}` : type;
     
     // Update memory for manual addition
     setMessages(prev => memoryManager.logAction(prev, memoryManager.formatAddNode(type, nodeInfo.label)));
@@ -786,9 +810,9 @@ export default function WorkflowVisualizer() {
              </Panel>
            </ReactFlow>
 
-           {/* AI Status Overlay */}
+           {/* AI Status Overlay - Keep visible while thinking OR while items are still being built in the queue */}
            <AnimatePresence>
-             {isArchitectThinking && (
+             {(isArchitectThinking || incomingQueue.filter(i => i.type !== 'node' || !i.data.id?.includes('manual')).length > 0) && (
                <motion.div 
                  initial={{ opacity: 0, scale: 0.9 }}
                  animate={{ opacity: 1, scale: 1 }}
