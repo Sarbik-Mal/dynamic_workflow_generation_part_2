@@ -319,7 +319,7 @@ export default function WorkflowVisualizer() {
     setIsArchitectThinking(true);
     ensureWorkflowId();
     
-    // 1. Identify unique nodes
+    // 1. Identify all unique nodes and build their configurations
     const nodeTypesFound = new Set<string>();
     logicalWorkflow.forEach(step => {
       if (step.node_name && step.node_name !== 'none') nodeTypesFound.add(step.node_name);
@@ -327,12 +327,11 @@ export default function WorkflowVisualizer() {
       if (step.target && step.target !== 'none') nodeTypesFound.add(step.target);
     });
 
-    // 2. Build target nodes
-    const targetNodes: Node[] = Array.from(nodeTypesFound).map(type => {
+    const nodeLibrary = new Map<string, Node>();
+    nodeTypesFound.forEach(type => {
       const existingNode = nodes.find(n => n.id === type);
       const nodeInfo = NODE_TYPES[type as keyof typeof NODE_TYPES];
-      
-      return {
+      nodeLibrary.set(type, {
         id: type,
         type: 'workflowNode',
         position: existingNode?.position || { x: Math.random() * 400, y: Math.random() * 400 },
@@ -342,56 +341,81 @@ export default function WorkflowVisualizer() {
           icon: nodeInfo?.icon || 'Zap',
           color: nodeInfo?.color || 'slate-400'
         }
-      };
+      });
     });
 
-    // 3. Build target edges
-    const targetEdges: Edge[] = [];
+    // 2. Identify all target edges for cleanup
+    const targetEdgeIds = new Set<string>();
     logicalWorkflow.forEach(step => {
       if (step.source && step.source !== 'none' && step.node_name && step.node_name !== 'none') {
-        const edgeId = `e-${step.source}-${step.node_name}`;
-        if (!targetEdges.find(e => e.id === edgeId)) {
-          targetEdges.push({
-            id: edgeId,
-            source: step.source,
-            target: step.node_name,
-            type: 'smoothstep',
-            animated: true,
-            style: { strokeWidth: 3, stroke: '#818cf8', opacity: 1 }
-          });
-        }
+        targetEdgeIds.add(`e-${step.source}-${step.node_name}`);
       }
       if (step.target && step.target !== 'none' && step.node_name && step.node_name !== 'none') {
-        const edgeId = `e-${step.node_name}-${step.target}`;
-        if (!targetEdges.find(e => e.id === edgeId)) {
-          targetEdges.push({
-            id: edgeId,
-            source: step.node_name,
-            target: step.target,
-            type: 'smoothstep',
-            animated: true,
-            style: { strokeWidth: 3, stroke: '#818cf8', opacity: 1 }
-          });
-        }
+        targetEdgeIds.add(`e-${step.node_name}-${step.target}`);
       }
     });
 
-    // 4. Staggered update for "building" effect
-    // First, clear nodes that are no longer present
+    // 3. Initial Cleanup (Remove obsolete elements first)
     setNodes(prev => prev.filter(n => nodeTypesFound.has(n.id)));
-    setEdges(prev => prev.filter(e => targetEdges.find(te => te.id === e.id)));
+    setEdges(prev => prev.filter(e => targetEdgeIds.has(e.id)));
+    
+    await new Promise(r => setTimeout(r, 400));
 
-    // Then add new nodes one by one
-    for (const node of targetNodes) {
-      setNodes(prev => {
-        if (prev.find(n => n.id === node.id)) return prev;
-        return [...prev, node];
-      });
-      await new Promise(r => setTimeout(r, 200));
+    // 4. Sequential Build (Process each logical step)
+    for (const step of logicalWorkflow) {
+      const stepNodeTypes = [];
+      if (step.source && step.source !== 'none') stepNodeTypes.push(step.source);
+      if (step.node_name && step.node_name !== 'none') stepNodeTypes.push(step.node_name);
+      if (step.target && step.target !== 'none') stepNodeTypes.push(step.target);
+
+      // Add nodes involved in this specific step
+      for (const type of stepNodeTypes) {
+        const nodeObj = nodeLibrary.get(type);
+        if (nodeObj) {
+          setNodes(prev => {
+            if (prev.find(n => n.id === nodeObj.id)) return prev;
+            return [...prev, nodeObj];
+          });
+        }
+      }
+      
+      await new Promise(r => setTimeout(r, 400)); // Visual pause for nodes
+
+      // Add connections for this specific step
+      const stepEdges: Edge[] = [];
+      if (step.source && step.source !== 'none' && step.node_name && step.node_name !== 'none') {
+        stepEdges.push({
+          id: `e-${step.source}-${step.node_name}`,
+          source: step.source,
+          target: step.node_name,
+          type: 'smoothstep',
+          animated: true,
+          style: { strokeWidth: 3, stroke: '#818cf8', opacity: 1 }
+        });
+      }
+      if (step.target && step.target !== 'none' && step.node_name && step.node_name !== 'none') {
+        stepEdges.push({
+          id: `e-${step.node_name}-${step.target}`,
+          source: step.node_name,
+          target: step.target,
+          type: 'smoothstep',
+          animated: true,
+          style: { strokeWidth: 3, stroke: '#818cf8', opacity: 1 }
+        });
+      }
+
+      if (stepEdges.length > 0) {
+        setEdges(prev => {
+          const newEdges = [...prev];
+          stepEdges.forEach(se => {
+            if (!newEdges.find(e => e.id === se.id)) newEdges.push(se);
+          });
+          return newEdges;
+        });
+        await new Promise(r => setTimeout(r, 600)); // Visual pause for edges & layout
+      }
     }
 
-    // Finally apply all edges
-    setEdges(targetEdges);
     setIsArchitectThinking(false);
   }, [nodes, edges]);
 
