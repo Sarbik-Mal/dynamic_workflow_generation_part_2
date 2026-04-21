@@ -46,6 +46,11 @@ io.on("connection", (socket) => {
     io.emit("UI_COMMAND:REMOVE_EDGE", data);
   });
 
+  socket.on("UI_COMMAND:UPDATE_WORKFLOW", (data) => {
+    console.error(`[WS] UPDATE_WORKFLOW Relay: ${data.workflow.length} items`);
+    io.emit("UI_COMMAND:UPDATE_WORKFLOW", data);
+  });
+
   socket.on("disconnect", () => {
     console.error("Client disconnected from WebSocket");
   });
@@ -74,83 +79,23 @@ const NODE_TYPES = {
   error_handler: { label: 'Error Handler', icon: 'AlertTriangle', color: 'slate-800', desc: 'Manages workflow errors' },
 };
 
-// Tool to add a specific node
+// Tool to generate/update the full workflow declaratively
 server.tool(
-  "add_workflow_node",
-  "Adds a functional processing node to the canvas",
+  "generate_workflow",
+  "Updates the entire workflow logic using a declarative list of connections",
   {
-    type: z.enum(Object.keys(NODE_TYPES)),
-    id: z.string().describe("Unique ID for the node")
+    workflow: z.array(z.object({
+      node_name: z.string().describe("Type of the node (e.g. csv_reader, mongodb_sink)"),
+      source: z.string().describe("Type of the source node, or 'none'"),
+      target: z.string().describe("Type of the target node, or 'none'")
+    })).describe("Full list of logical steps in the workflow")
   },
-  async ({ type, id }) => {
-    const nodeInfo = NODE_TYPES[type];
-    io.emit("UI_COMMAND:ADD_NODE", { 
-      id, 
-      type: 'workflowNode', 
-      data: { 
-        label: nodeInfo.label, 
-        description: nodeInfo.desc,
-        icon: nodeInfo.icon,
-        color: nodeInfo.color // RESTORED COLOR FIELD
-      } 
-    });
+  async ({ workflow }) => {
+    console.error(`[WS] UPDATE_WORKFLOW received from tool`);
+    io.emit("UI_COMMAND:UPDATE_WORKFLOW", { workflow });
 
     return {
-      content: [{ type: "text", text: `Added ${nodeInfo.label} node with ID: ${id}` }],
-    };
-  }
-);
-
-// Tool to connect two nodes
-server.tool(
-  "connect_nodes",
-  "Creates a connection (edge) between two existing nodes",
-  {
-    source: z.string().describe("ID of the source node"),
-    target: z.string().describe("ID of the target node")
-  },
-  async ({ source, target }) => {
-    io.emit("UI_COMMAND:ADD_EDGE", { 
-      id: `e-${source}-${target}`, 
-      source, 
-      target,
-      animated: true 
-    });
-
-    return {
-      content: [{ type: "text", text: `Connected ${source} to ${target}` }],
-    };
-  }
-);
-
-// Tool to remove a node
-server.tool(
-  "remove_workflow_node",
-  "Removes a processing node from the canvas by its ID",
-  {
-    id: z.string().describe("ID of the node to remove")
-  },
-  async ({ id }) => {
-    io.emit("UI_COMMAND:REMOVE_NODE", { id });
-
-    return {
-      content: [{ type: "text", text: `Removed node with ID: ${id}` }],
-    };
-  }
-);
-
-// Tool to remove an edge
-server.tool(
-  "remove_edge",
-  "Removes a connection between two nodes",
-  {
-    id: z.string().describe("ID of the edge to remove (usually in format e-source-target)")
-  },
-  async ({ id }) => {
-    io.emit("UI_COMMAND:REMOVE_EDGE", { id });
-
-    return {
-      content: [{ type: "text", text: `Removed edge with ID: ${id}` }],
+      content: [{ type: "text", text: `Workflow updated with ${workflow.length} logical steps.` }],
     };
   }
 );

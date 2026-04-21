@@ -165,6 +165,7 @@ export default function WorkflowVisualizer() {
   const [workflowId, setWorkflowId] = useState<string | null>(null);
   
   const socketRef = useRef<Socket | null>(null);
+  const reconcileRef = useRef<any>(null);
 
   // Initialize WebSocket
   useEffect(() => {
@@ -191,6 +192,11 @@ export default function WorkflowVisualizer() {
     socketRef.current.on('UI_COMMAND:REMOVE_EDGE', (data: any) => {
       console.log('[SOCKET] Remove Edge Recv:', data.id);
       setIncomingQueue((prev) => [...prev, { type: 'remove_edge', data }]);
+    });
+
+    socketRef.current.on('UI_COMMAND:UPDATE_WORKFLOW', (data: any) => {
+      console.log('[SOCKET] Update Workflow Recv:', data.workflow);
+      reconcileRef.current?.(data.workflow);
     });
 
     // Listen for manual actions from custom components
@@ -308,6 +314,91 @@ export default function WorkflowVisualizer() {
     }
     return workflowId;
   }, [workflowId]);
+
+  const reconcileWorkflow = useCallback(async (logicalWorkflow: any[]) => {
+    setIsArchitectThinking(true);
+    ensureWorkflowId();
+    
+    // 1. Identify unique nodes
+    const nodeTypesFound = new Set<string>();
+    logicalWorkflow.forEach(step => {
+      if (step.node_name && step.node_name !== 'none') nodeTypesFound.add(step.node_name);
+      if (step.source && step.source !== 'none') nodeTypesFound.add(step.source);
+      if (step.target && step.target !== 'none') nodeTypesFound.add(step.target);
+    });
+
+    // 2. Build target nodes
+    const targetNodes: Node[] = Array.from(nodeTypesFound).map(type => {
+      const existingNode = nodes.find(n => n.id === type);
+      const nodeInfo = NODE_TYPES[type as keyof typeof NODE_TYPES];
+      
+      return {
+        id: type,
+        type: 'workflowNode',
+        position: existingNode?.position || { x: Math.random() * 400, y: Math.random() * 400 },
+        data: {
+          label: nodeInfo?.label || type,
+          description: nodeInfo?.desc || '',
+          icon: nodeInfo?.icon || 'Zap',
+          color: nodeInfo?.color || 'slate-400'
+        }
+      };
+    });
+
+    // 3. Build target edges
+    const targetEdges: Edge[] = [];
+    logicalWorkflow.forEach(step => {
+      if (step.source && step.source !== 'none' && step.node_name && step.node_name !== 'none') {
+        const edgeId = `e-${step.source}-${step.node_name}`;
+        if (!targetEdges.find(e => e.id === edgeId)) {
+          targetEdges.push({
+            id: edgeId,
+            source: step.source,
+            target: step.node_name,
+            type: 'smoothstep',
+            animated: true,
+            style: { strokeWidth: 3, stroke: '#818cf8', opacity: 1 }
+          });
+        }
+      }
+      if (step.target && step.target !== 'none' && step.node_name && step.node_name !== 'none') {
+        const edgeId = `e-${step.node_name}-${step.target}`;
+        if (!targetEdges.find(e => e.id === edgeId)) {
+          targetEdges.push({
+            id: edgeId,
+            source: step.node_name,
+            target: step.target,
+            type: 'smoothstep',
+            animated: true,
+            style: { strokeWidth: 3, stroke: '#818cf8', opacity: 1 }
+          });
+        }
+      }
+    });
+
+    // 4. Staggered update for "building" effect
+    // First, clear nodes that are no longer present
+    setNodes(prev => prev.filter(n => nodeTypesFound.has(n.id)));
+    setEdges(prev => prev.filter(e => targetEdges.find(te => te.id === e.id)));
+
+    // Then add new nodes one by one
+    for (const node of targetNodes) {
+      setNodes(prev => {
+        if (prev.find(n => n.id === node.id)) return prev;
+        return [...prev, node];
+      });
+      await new Promise(r => setTimeout(r, 200));
+    }
+
+    // Finally apply all edges
+    setEdges(targetEdges);
+    setIsArchitectThinking(false);
+  }, [nodes, edges]);
+
+  // Sync reconcileWorkflow to ref for socket listener
+  useEffect(() => {
+    reconcileRef.current = reconcileWorkflow;
+  }, [reconcileWorkflow]);
 
   const handleSendCommand = async (e: React.FormEvent) => {
     e.preventDefault();

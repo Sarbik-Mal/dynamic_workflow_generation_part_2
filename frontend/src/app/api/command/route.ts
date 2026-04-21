@@ -85,97 +85,13 @@ CRITICAL RULES:
     }
 
     try {
-      const nodeInstances = new Map<string, string>(); 
-      let idCounter = 1;
-      
-      const emittedNodes = new Set<string>();
-      const emittedEdges = new Set<string>();
-      const pendingEdges: { id: string, source: string, target: string }[] = [];
-
-      for (const step of finalObject.workflow) {
-        const typesToProcess = [];
-        if (step.source && step.source !== 'none') typesToProcess.push(step.source);
-        if (step.node_name && step.node_name !== 'none') typesToProcess.push(step.node_name);
-        if (step.target && step.target !== 'none') typesToProcess.push(step.target);
-
-        for (const type of typesToProcess) {
-          if (!nodeInstances.has(type)) {
-            nodeInstances.set(type, `${type}_${idCounter++}`);
-          }
-        }
-
-        const currentType = step.node_name;
-        if (currentType && currentType !== 'none') {
-          const currentId = nodeInstances.get(currentType)!;
-          
-          if (step.source && step.source !== 'none') {
-            const sourceId = nodeInstances.get(step.source)!;
-            const edgeId = `e-${sourceId}-${currentId}`;
-            pendingEdges.push({ id: edgeId, source: sourceId, target: currentId });
-          }
-          if (step.target && step.target !== 'none') {
-            const targetId = nodeInstances.get(step.target)!;
-            const edgeId = `e-${currentId}-${targetId}`;
-            pendingEdges.push({ id: edgeId, source: currentId, target: targetId });
-          }
-        }
-
-        for (const type of typesToProcess) {
-          const typeKey = type as keyof typeof NODE_TYPES;
-          if (!NODE_TYPES[typeKey]) continue; 
-
-          const nodeId = nodeInstances.get(type)!;
-
-          if (!emittedNodes.has(nodeId)) {
-            const nodeInfo = NODE_TYPES[typeKey];
-            socket.emit('UI_COMMAND:ADD_NODE', { 
-              id: nodeId, 
-              type: 'workflowNode', 
-              data: { 
-                label: nodeInfo.label, 
-                description: nodeInfo.desc,
-                icon: nodeInfo.icon,
-                color: nodeInfo.color
-              } 
-            });
-            emittedNodes.add(nodeId);
-            
-            // Restored the Node emission log
-            console.log(`[Architect] Emitted Node: ${nodeId}`);
-            
-            await new Promise(r => setTimeout(r, 600)); 
-
-            let i = 0;
-            while (i < pendingEdges.length) {
-              const edge = pendingEdges[i];
-              if (emittedNodes.has(edge.source) && emittedNodes.has(edge.target)) {
-                if (!emittedEdges.has(edge.id)) {
-                  socket.emit('UI_COMMAND:ADD_EDGE', { 
-                    id: edge.id, 
-                    source: edge.source, 
-                    target: edge.target,
-                    animated: true 
-                  });
-                  emittedEdges.add(edge.id);
-                  
-                  // Restored the Edge emission log
-                  console.log(`[Architect] Emitted Edge: ${edge.source} -> ${edge.target}`);
-                  
-                  await new Promise(r => setTimeout(r, 400)); 
-                }
-                pendingEdges.splice(i, 1); 
-              } else {
-                i++;
-              }
-            }
-          }
-        }
-      }
+      socket.emit('UI_COMMAND:UPDATE_WORKFLOW', { 
+        workflow: finalObject.workflow 
+      });
+      console.log(`[Architect] Emitted logical workflow update.`);
     } finally {
       await new Promise(r => setTimeout(r, 500));
       socket.disconnect();
-      
-      // Restored the connection close log
       console.log(`[Architect] Connection closed.`);
     }
 
