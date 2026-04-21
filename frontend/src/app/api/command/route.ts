@@ -1,12 +1,12 @@
 import { openai } from '@ai-sdk/openai';
-import { generateText, tool, generateObject } from 'ai';
+import { generateObject } from 'ai';
 import { z } from 'zod';
 import { io, Socket } from 'socket.io-client';
 import { NODE_TYPES } from '@/lib/nodes';
 
 // Helper to connect once and return a socket promise
 const connectSocket = () => {
-  const socket = io('http://localhost:4000', {
+  const socket = io(process.env.NEXT_PUBLIC_WS_URL || 'http://localhost:4000', {
     transports: ['websocket'],
   });
 
@@ -30,29 +30,38 @@ const connectSocket = () => {
 };
 
 export async function POST(req: Request) {
-  const { prompt, context } = await req.json(); // RECEIVING MEMORY
+  // Receive the conversation history (user and assistant messages) from the frontend
+  const { messages } = await req.json(); 
 
-  console.log('\n--- CONVERSATION HISTORY & MEMORY ---');
-  console.log('USER PROMPT:', prompt);
+  const systemPrompt = `You are the Workflow Architect. Convert the user's exact request into a sequence of logical operations.
+      
+Nodes available:
+${Object.entries(NODE_TYPES).map(([id, n]) => `- ${id}: ${n.label} (${n.desc})`).join('\n')}
 
-  // Summarize context for the AI
-  const currentNodesSummary = context?.nodes?.map((n: any) => `- ${n.id} (${n.data?.label})`).join('\n') || 'None';
-  const currentEdgesSummary = context?.edges?.map((e: any) => `- ${e.source} -> ${e.target}`).join('\n') || 'None';
+CRITICAL RULES:
+1. Map the user's request strictly to the exact node types available.
+2. Do NOT add any nodes that the user did not explicitly ask for.
+3. For each step, specify the "node_name" (which must be a valid node type), its "source" (the node type it receives data from, or "none"), and its "target" (the node type it sends data to, or "none").
+4. Ensure a logical directed flow from sources to sinks.
+5. Consider the conversation history to understand what nodes have already been added or modified.`;
+
+  // Combine system prompt with the ongoing conversation history
+  const fullMemory = [
+    { role: 'system', content: systemPrompt },
+    ...messages
+  ];
+
+  // Print the complete memory payload to the terminal
+  console.log('\n=============================================');
+  console.log('--- FULL CONVERSATION HISTORY & MEMORY ---');
+  console.log(JSON.stringify(fullMemory, null, 2));
+  console.log('=============================================\n');
 
   try {
+    // Generate the workflow sequence using the full memory array
     const { object } = await generateObject({
       model: openai('gpt-4o-mini'),
-      system: `You are the Workflow Architect. Convert the user's exact request into a sequence of logical operations.
-      
-      Nodes available:
-      ${Object.entries(NODE_TYPES).map(([id, n]) => `- ${id}: ${n.label} (${n.desc})`).join('\n')}
-      
-      CRITICAL RULES:
-      1. Map the user's request strictly to the exact node types available.
-      2. Do NOT add any nodes that the user did not explicitly ask for.
-      3. For each step, specify the "node_name" (which must be a valid node type), its "source" (the node type it receives data from, or "none"), and its "target" (the node type it sends data to, or "none").
-      4. Ensure a logical directed flow from sources to sinks.`,
-      prompt,
+      messages: fullMemory as any, // AI SDK accepts the combined system/user/assistant array
       schema: z.object({
         workflow: z.array(z.object({
           node_name: z.string(),
@@ -62,33 +71,10 @@ export async function POST(req: Request) {
       })
     });
 
-    // Double-checking loop to prevent hallucinations and unrequested nodes
-    const { object: verifiedObject } = await generateObject({
-      model: openai('gpt-4o-mini'),
-      system: `You are the strict Quality Assurance Architect. 
-      Your only job is to review a proposed workflow against the original user prompt and remove ANY nodes that the user did not explicitly request.
-      Also, remove any completely disconnected nodes (nodes where both source and target are 'none' in a multi-node graph).`,
-      prompt: `Original User Request: "${prompt}"
-      Proposed Workflow:
-      ${JSON.stringify(object.workflow, null, 2)}
-      
-      Return the corrected workflow exactly matching the original request without unrequested fluff.`,
-      schema: z.object({
-        workflow: z.array(z.object({
-          node_name: z.string(),
-          source: z.string(),
-          target: z.string()
-        }))
-      })
-    });
+    const finalObject = object;
 
-    // Swap the original hallucinated object for the verified one
-    const finalObject = verifiedObject;
+    console.log('AGENT GENERATED RAW WORKFLOW:', JSON.stringify(finalObject.workflow, null, 2));
 
-    console.log('AGENT GENERATED RAW WORKFLOW:', JSON.stringify(object.workflow, null, 2));
-    console.log('QA LOOP VERIFIED WORKFLOW:', JSON.stringify(finalObject.workflow, null, 2));
-
-    // Hardcoded logic to build the workflow from the simple sequence
     console.log(`[Architect] Opening connection for workflow update...`);
     let socket: Socket;
     try {
@@ -99,30 +85,25 @@ export async function POST(req: Request) {
     }
 
     try {
-      const nodeInstances = new Map<string, string>(); // Maps node_type to instance_id
+      const nodeInstances = new Map<string, string>(); 
       let idCounter = 1;
       
       const emittedNodes = new Set<string>();
       const emittedEdges = new Set<string>();
-      
-      // Track edges we want to draw, and draw them AS SOON as both nodes exist
       const pendingEdges: { id: string, source: string, target: string }[] = [];
 
       for (const step of finalObject.workflow) {
-        // Collect types mentioned in this step
         const typesToProcess = [];
         if (step.source && step.source !== 'none') typesToProcess.push(step.source);
         if (step.node_name && step.node_name !== 'none') typesToProcess.push(step.node_name);
         if (step.target && step.target !== 'none') typesToProcess.push(step.target);
 
-        // 1. Assign IDs to any newly seen nodes
         for (const type of typesToProcess) {
           if (!nodeInstances.has(type)) {
             nodeInstances.set(type, `${type}_${idCounter++}`);
           }
         }
 
-        // 2. Register desired edges from this step
         const currentType = step.node_name;
         if (currentType && currentType !== 'none') {
           const currentId = nodeInstances.get(currentType)!;
@@ -139,10 +120,9 @@ export async function POST(req: Request) {
           }
         }
 
-        // 3. Emit nodes sequentially, immediately drawing any edges that become valid
         for (const type of typesToProcess) {
           const typeKey = type as keyof typeof NODE_TYPES;
-          if (!NODE_TYPES[typeKey]) continue; // Skip invalid nodes
+          if (!NODE_TYPES[typeKey]) continue; 
 
           const nodeId = nodeInstances.get(type)!;
 
@@ -159,10 +139,12 @@ export async function POST(req: Request) {
               } 
             });
             emittedNodes.add(nodeId);
+            
+            // Restored the Node emission log
             console.log(`[Architect] Emitted Node: ${nodeId}`);
-            await new Promise(r => setTimeout(r, 600)); // Delay for node render
+            
+            await new Promise(r => setTimeout(r, 600)); 
 
-            // Check if any pending edges can be drawn now that this node exists
             let i = 0;
             while (i < pendingEdges.length) {
               const edge = pendingEdges[i];
@@ -175,10 +157,13 @@ export async function POST(req: Request) {
                     animated: true 
                   });
                   emittedEdges.add(edge.id);
+                  
+                  // Restored the Edge emission log
                   console.log(`[Architect] Emitted Edge: ${edge.source} -> ${edge.target}`);
-                  await new Promise(r => setTimeout(r, 400)); // Delay for edge render
+                  
+                  await new Promise(r => setTimeout(r, 400)); 
                 }
-                pendingEdges.splice(i, 1); // Remove from queue
+                pendingEdges.splice(i, 1); 
               } else {
                 i++;
               }
@@ -189,11 +174,17 @@ export async function POST(req: Request) {
     } finally {
       await new Promise(r => setTimeout(r, 500));
       socket.disconnect();
+      
+      // Restored the connection close log
       console.log(`[Architect] Connection closed.`);
     }
 
     console.log('-------------------------------------\n');
-    return Response.json({ text: 'Workflow created successfully.' });
+    
+    return Response.json({ 
+      text: 'Workflow created successfully.',
+      workflow: finalObject.workflow // Sent back to append to the assistant's memory
+    });
   } catch (error: any) {
     console.error('AI Workflow Error:', error);
     return Response.json({ error: error.message }, { status: 500 });

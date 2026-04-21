@@ -161,6 +161,7 @@ export default function WorkflowVisualizer() {
   const [isArchitectThinking, setIsArchitectThinking] = useState(false);
   const [activeTab, setActiveTab] = useState<'history' | 'library'>('library');
   const [incomingQueue, setIncomingQueue] = useState<{ type: 'node' | 'edge' | 'remove_node' | 'remove_edge', data: any }[]>([]);
+  const [messages, setMessages] = useState<{role: string, content: string}[]>([]);
   
   const socketRef = useRef<Socket | null>(null);
 
@@ -302,19 +303,34 @@ export default function WorkflowVisualizer() {
     e.preventDefault();
     if (!command.trim() || isArchitectThinking) return;
 
+    const currentCommand = command;
+    setCommand('');
     setIsArchitectThinking(true);
+
+    // Optimistically append the user message
+    const newMessages = [...messages, { role: 'user', content: currentCommand }];
+    setMessages(newMessages);
+
     try {
       const res = await fetch('/api/command', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ 
-          prompt: command,
-          context: { nodes, edges } // PASSING MEMORY TO AI
+          messages: newMessages // PASSING PROPER HISTORY TO AI
         }),
       });
       
       if (res.ok) {
-        setCommand('');
+        const data = await res.json();
+        
+        // Save the AI's actions to memory so it knows what it did in future turns
+        setMessages(prev => [
+          ...prev, 
+          { 
+            role: 'assistant', 
+            content: `I executed the following workflow actions: ${JSON.stringify(data.workflow)}`
+          }
+        ]);
       }
     } catch (error) {
       console.error('Failed to send command:', error);
@@ -522,7 +538,11 @@ export default function WorkflowVisualizer() {
 
           <div className="flex items-center gap-3">
             <button 
-              onClick={() => { setNodes([]); setEdges([]); }}
+              onClick={() => { 
+                setNodes([]); 
+                setEdges([]); 
+                setMessages([]); // Reset memory when the board is cleared
+              }}
               className="px-4 py-2 text-xs font-bold text-slate-500 hover:text-white transition-colors uppercase tracking-widest"
             >
               Clear Canvas
