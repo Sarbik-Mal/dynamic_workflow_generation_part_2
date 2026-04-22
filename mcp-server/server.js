@@ -47,7 +47,13 @@ io.on("connection", (socket) => {
   });
 
   socket.on("UI_COMMAND:UPDATE_WORKFLOW", (data) => {
-    console.error(`[WS] UPDATE_WORKFLOW Relay: ${data.workflow.length} items`);
+    if (data.blueprint) {
+      console.error(`[WS] UPDATE_WORKFLOW (Blueprint): ${data.blueprint.nodes?.length || 0} nodes, ${data.blueprint.edges?.length || 0} edges`);
+    } else if (data.workflow) {
+      console.error(`[WS] UPDATE_WORKFLOW (Legacy): ${data.workflow.length || 0} items`);
+    } else {
+      console.error(`[WS] UPDATE_WORKFLOW: Received unknown data format`, data);
+    }
     io.emit("UI_COMMAND:UPDATE_WORKFLOW", data);
   });
 
@@ -82,20 +88,24 @@ const NODE_TYPES = {
 // Tool to generate/update the full workflow declaratively
 server.tool(
   "generate_workflow",
-  "Updates the entire workflow logic using a declarative list of connections",
+  "Updates the entire workflow topology declaratively (Supports both Legacy and Blueprint formats)",
   {
+    blueprint: z.object({
+      nodes: z.array(z.string()),
+      edges: z.array(z.object({ source: z.string(), target: z.string() }))
+    }).optional(),
     workflow: z.array(z.object({
-      node_name: z.string().describe("Type of the node (e.g. csv_reader, mongodb_sink)"),
-      source: z.string().describe("Type of the source node, or 'none'"),
-      target: z.string().describe("Type of the target node, or 'none'")
-    })).describe("Full list of logical steps in the workflow")
+      node_name: z.string(),
+      source: z.string(),
+      target: z.string()
+    })).optional()
   },
-  async ({ workflow }) => {
+  async (payload) => {
     console.error(`[WS] UPDATE_WORKFLOW received from tool`);
-    io.emit("UI_COMMAND:UPDATE_WORKFLOW", { workflow });
+    io.emit("UI_COMMAND:UPDATE_WORKFLOW", payload);
 
     return {
-      content: [{ type: "text", text: `Workflow updated with ${workflow.length} logical steps.` }],
+      content: [{ type: "text", text: `Workflow updated successfully.` }],
     };
   }
 );

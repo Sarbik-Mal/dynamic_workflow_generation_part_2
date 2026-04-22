@@ -18,6 +18,10 @@ const elkOptions = {
 export const getLayoutedElements = async (nodes: any[], edges: any[]) => {
   const isHorizontal = elkOptions['elk.direction'] === 'RIGHT';
   
+  // Safety check: Filter out edges that reference non-existent nodes to prevent ELK.js crashes
+  const validNodeIds = new Set(nodes.map(n => n.id));
+  const validEdges = edges.filter(e => validNodeIds.has(e.source) && validNodeIds.has(e.target));
+
   const graph: any = {
     id: 'root',
     layoutOptions: elkOptions,
@@ -26,7 +30,7 @@ export const getLayoutedElements = async (nodes: any[], edges: any[]) => {
       width: 260, // Adjusted to match w-60 cards + padding breathing room
       height: 140, // Account for text and description height
     })),
-    edges: edges.map((edge) => ({
+    edges: validEdges.map((edge) => ({
       id: edge.id,
       sources: [edge.source],
       targets: [edge.target],

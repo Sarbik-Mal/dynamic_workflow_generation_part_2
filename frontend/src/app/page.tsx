@@ -196,8 +196,8 @@ export default function WorkflowVisualizer() {
     });
 
     socketRef.current.on('UI_COMMAND:UPDATE_WORKFLOW', (data: any) => {
-      console.log('[SOCKET] Update Workflow Recv:', data.workflow);
-      reconcileRef.current?.(data.workflow);
+      console.log('[SOCKET] Update Blueprint Recv:', data.blueprint);
+      reconcileRef.current?.(data.blueprint);
     });
 
     // Listen for manual actions from custom components
@@ -362,123 +362,90 @@ export default function WorkflowVisualizer() {
     []
   );
 
-  const reconcileWorkflow = useCallback(async (logicalWorkflow: any[]) => {
+  const reconcileWorkflow = useCallback(async (blueprint: { nodes: string[], edges: {source: string, target: string}[] }) => {
+    // Basic guard
+    if (!blueprint || !blueprint.nodes) {
+      console.error('[Architect] Received invalid blueprint:', blueprint);
+      setIsArchitectThinking(false);
+      return;
+    }
+
     setIsArchitectThinking(true);
     ensureWorkflowId();
     
-    // 1. Identify all unique nodes and build their configurations
-    const nodeTypesFound = new Set<string>();
-    logicalWorkflow.forEach(step => {
-      if (step.node_name && step.node_name !== 'none') nodeTypesFound.add(step.node_name);
-      if (step.source && step.source !== 'none') nodeTypesFound.add(step.source);
-      if (step.target && step.target !== 'none') nodeTypesFound.add(step.target);
-    });
+    try {
+      // 1. Build the Node Library from the blueprint manifest
+      const nodeLibrary = new Map<string, Node>();
+      blueprint.nodes.forEach(type => {
+        const nodeInfo = NODE_TYPES[type as keyof typeof NODE_TYPES];
+        if (!nodeInfo) return;
 
-    const nodeLibrary = new Map<string, Node>();
-    nodeTypesFound.forEach(type => {
-      // STRICT VALIDATION: Only render nodes that exist in our actual library
-      const nodeInfo = NODE_TYPES[type as keyof typeof NODE_TYPES];
-      if (!nodeInfo) {
-        console.warn(`[Architect] Skipping invalid node type: ${type}`);
-        return;
-      }
-
-      const existingNode = nodes.find(n => n.id === type);
-      nodeLibrary.set(type, {
-        id: type,
-        type: 'workflowNode',
-        position: existingNode?.position || { x: Math.random() * 400, y: Math.random() * 400 },
-        data: {
-          label: nodeInfo.label,
-          description: nodeInfo.desc,
-          icon: nodeInfo.icon,
-          color: nodeInfo.color
-        }
+        nodeLibrary.set(type, {
+          id: type,
+          type: 'workflowNode',
+          position: { x: Math.random() * 400, y: Math.random() * 400 }, // Initial fallback
+          data: {
+            label: nodeInfo.label,
+            description: nodeInfo.desc,
+            icon: nodeInfo.icon,
+            color: nodeInfo.color
+          }
+        });
       });
-    });
 
-    // Re-calculate nodesFound based on successfully created library entries
-    const validatedNodeIds = new Set(Array.from(nodeLibrary.keys()));
+      const validatedNodeIds = new Set(Array.from(nodeLibrary.keys()));
+      const targetEdgeIds = new Set(blueprint.edges.map(e => `e-${e.source}-${e.target}`));
 
-    // 2. Identify all target edges for cleanup
-    const targetEdgeIds = new Set<string>();
-    logicalWorkflow.forEach(step => {
-      if (step.source && step.source !== 'none' && step.node_name && step.node_name !== 'none') {
-        targetEdgeIds.add(`e-${step.source}-${step.node_name}`);
-      }
-      if (step.target && step.target !== 'none' && step.node_name && step.node_name !== 'none') {
-        targetEdgeIds.add(`e-${step.node_name}-${step.target}`);
-      }
-    });
+      // 2. Initial Cleanup
+      setNodes(prev => prev.filter(n => validatedNodeIds.has(n.id)));
+      setEdges(prev => prev.filter(e => {
+        const isInBlueprint = targetEdgeIds.has(e.id);
+        const isStillValidManual = e.data?.manual === true && validatedNodeIds.has(e.source) && validatedNodeIds.has(e.target);
+        return isInBlueprint || isStillValidManual;
+      }));
+      
+      await new Promise(r => setTimeout(r, 400));
 
-    // 3. Initial Cleanup (Remove obsolete elements first)
-    setNodes(prev => prev.filter(n => validatedNodeIds.has(n.id)));
-    setEdges(prev => prev.filter(e => {
-      // Keep if it's in the AI's plan OR if it was manually created
-      return targetEdgeIds.has(e.id) || e.data?.manual === true;
-    }));
-    
-    await new Promise(r => setTimeout(r, 400));
-
-    // 4. Sequential Build (Process each logical step)
-    for (const step of logicalWorkflow) {
-      const stepNodeTypes = [];
-      if (step.source && step.source !== 'none') stepNodeTypes.push(step.source);
-      if (step.node_name && step.node_name !== 'none') stepNodeTypes.push(step.node_name);
-      if (step.target && step.target !== 'none') stepNodeTypes.push(step.target);
-
-      // Add nodes involved in this specific step
-      for (const type of stepNodeTypes) {
-        const nodeObj = nodeLibrary.get(type);
+      // 3. Sequential Build
+      for (const id of Array.from(validatedNodeIds)) {
+        const nodeObj = nodeLibrary.get(id);
         if (nodeObj) {
           setNodes(prev => {
-            if (prev.find(n => n.id === nodeObj.id)) return prev;
+            const existing = prev.find(n => n.id === nodeObj.id);
+            if (existing) return prev;
             return [...prev, nodeObj];
           });
         }
       }
       
-      await new Promise(r => setTimeout(r, 400)); // Visual pause for nodes
+      await new Promise(r => setTimeout(r, 400));
 
-      // Add connections for this specific step
-      const stepEdges: Edge[] = [];
-      if (step.source && step.source !== 'none' && step.node_name && step.node_name !== 'none') {
-        stepEdges.push({
-          id: `e-${step.source}-${step.node_name}`,
-          source: step.source,
-          target: step.node_name,
+      for (const edge of blueprint.edges) {
+        const edgeId = `e-${edge.source}-${edge.target}`;
+        const newEdge: Edge = {
+          id: edgeId,
+          source: edge.source,
+          target: edge.target,
           type: 'smoothstep',
           animated: true,
           style: { strokeWidth: 3, stroke: '#818cf8', opacity: 1 }
-        });
-      }
-      if (step.target && step.target !== 'none' && step.node_name && step.node_name !== 'none') {
-        stepEdges.push({
-          id: `e-${step.node_name}-${step.target}`,
-          source: step.node_name,
-          target: step.target,
-          type: 'smoothstep',
-          animated: true,
-          style: { strokeWidth: 3, stroke: '#818cf8', opacity: 1 }
-        });
-      }
+        };
 
-      if (stepEdges.length > 0) {
         setEdges(prev => {
-          const newEdges = [...prev];
-          stepEdges.forEach(se => {
-            if (!newEdges.find(e => e.id === se.id)) newEdges.push(se);
-          });
-          return newEdges;
+          if (prev.find(e => e.id === edgeId)) return prev;
+          return [...prev, newEdge];
         });
-        await new Promise(r => setTimeout(r, 600)); // Visual pause for edges & layout
+        
+        await new Promise(r => setTimeout(r, 500));
       }
-    }
 
-    // Final pause before completing
-    await new Promise(r => setTimeout(r, 1000));
-    setIsArchitectThinking(false);
-  }, [nodes, edges]);
+      await new Promise(r => setTimeout(r, 800));
+    } catch (error) {
+      console.error('[Architect] Reconciliation failed:', error);
+    } finally {
+      setIsArchitectThinking(false);
+    }
+  }, []); // TRIPLE REMOVED nodes/edges from dependency to stop re-creation cycles
 
   // Sync reconcileWorkflow to ref for socket listener
   useEffect(() => {
@@ -495,31 +462,14 @@ export default function WorkflowVisualizer() {
     
     ensureWorkflowId();
     
-    // SYNC: Inject the absolute source of truth (current JSON) into history 
+    // SYNC: Inject the absolute source of truth (current JSON Blueprint) 
     // so the Architect doesn't have to guess from the logs.
-    const currentLogicalState: any[] = [];
+    const currentBlueprint = {
+      nodes: nodes.map(n => n.id),
+      edges: edges.map(e => ({ source: e.source, target: e.target }))
+    };
     
-    // Represent every connection accurately
-    edges.forEach(edge => {
-      currentLogicalState.push({ 
-        node_name: edge.source, 
-        source: 'none',
-        target: edge.target
-      });
-    });
-
-    // Also include isolated nodes
-    nodes.forEach(node => {
-      if (!edges.some(e => e.source === node.id || e.target === node.id)) {
-        currentLogicalState.push({ 
-          node_name: node.id, 
-          source: 'none',
-          target: 'none'
-        });
-      }
-    });
-    
-    const messagesWithSync = memoryManager.logAction(messages, memoryManager.formatCurrentState(currentLogicalState));
+    const messagesWithSync = memoryManager.logAction(messages, memoryManager.formatCurrentState(currentBlueprint));
 
     // Optimistically append the user message
     const newMessages: MemoryMessage[] = [...messagesWithSync, { role: 'user', content: currentCommand }];
@@ -542,7 +492,7 @@ export default function WorkflowVisualizer() {
           ...prev, 
           { 
             role: 'assistant', 
-            content: `I executed the following workflow actions: ${JSON.stringify(data.workflow)}`
+            content: `I executed the following blueprint update: ${JSON.stringify(data.blueprint)}`
           }
         ]);
       }

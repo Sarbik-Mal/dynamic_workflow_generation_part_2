@@ -63,9 +63,9 @@ export const memoryManager = {
   },
 
   /**
-   * Formats the entire current workflow JSON for memory syncing
+   * Formats the entire current workflow JSON for memory syncing (Blueprint format)
    */
-  formatCurrentState: (workflow: any[]): string => {
-    return `[SYSTEM_SYNC] CURRENT_CANVAS_GRAPH: ${JSON.stringify(workflow)}. This is the absolute ground truth of what is currently visible to the user.`;
+  formatCurrentState: (blueprint: any): string => {
+    return `[SYSTEM_SYNC] CURRENT_CANVAS_GRAPH: ${JSON.stringify(blueprint)}. This is the absolute ground truth of what is currently visible to the user.`;
   }
 };
