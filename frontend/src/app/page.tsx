@@ -82,6 +82,7 @@ const IconMap: Record<string, React.ReactNode> = {
 const WorkflowNode = ({ data, id }: any) => {
   const [isReviewing, setIsReviewing] = useState(false);
   const [reviewText, setReviewText] = useState('');
+  const [editingReviewId, setEditingReviewId] = useState<string | null>(null);
 
   const handleSubmitReview = (e: React.FormEvent) => {
     e.preventDefault();
@@ -109,19 +110,64 @@ const WorkflowNode = ({ data, id }: any) => {
     )}>
       
       {/* Review Labels (Always Shown) */}
-      <div className="absolute -top-10 left-0 w-full flex flex-col gap-1 items-start pointer-events-none">
+      <div className="absolute -top-4 left-0 w-full flex flex-col-reverse gap-1 items-start pointer-events-none nodrag mb-2 -translate-y-full">
         <AnimatePresence>
-          {data.reviews?.map((review: string, idx: number) => (
-            <motion.div
-              key={`${id}-review-${idx}`}
-              initial={{ opacity: 0, x: -10, scale: 0.8 }}
-              animate={{ opacity: 1, x: 0, scale: 1 }}
-              className="bg-indigo-600/90 backdrop-blur-md text-white text-[9px] font-bold px-2 py-1 rounded-lg border border-indigo-400/50 shadow-lg pointer-events-auto max-w-[200px] truncate"
-            >
-              <Sparkles className="w-2 h-2 inline-block mr-1" />
-              {review}
-            </motion.div>
-          ))}
+          {data.reviews?.map((review: any, idx: number) => {
+            const isEditing = editingReviewId === review.uuid;
+            return (
+              <motion.div
+                key={`${id}-review-${review.uuid || idx}`}
+                initial={{ opacity: 0, y: 10, scale: 0.8 }}
+                animate={{ opacity: 1, y: 0, scale: 1 }}
+                exit={{ opacity: 0, scale: 0.8 }}
+                onDoubleClick={(e) => {
+                  e.stopPropagation();
+                  setEditingReviewId(review.uuid);
+                }}
+                className={cn(
+                  "backdrop-blur-md text-white px-2 py-1.5 rounded-lg shadow-lg pointer-events-auto flex items-center gap-2 w-[280px]",
+                  isEditing ? "bg-slate-800 border-2 border-indigo-500/80" : "bg-indigo-900/95 border border-indigo-400/50"
+                )}
+              >
+                <Sparkles className="w-3 h-3 shrink-0 text-indigo-300" />
+                {isEditing ? (
+                  <input
+                    autoFocus
+                    type="text"
+                    value={review.text}
+                    onChange={(e) => {
+                      window.dispatchEvent(new CustomEvent('UI_ACTION:EDIT_NODE_REVIEW', { 
+                        detail: { id, uuid: review.uuid, newText: e.target.value } 
+                      }));
+                    }}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter') {
+                        setEditingReviewId(null);
+                      }
+                    }}
+                    onBlur={() => setEditingReviewId(null)}
+                    onClick={(e) => e.stopPropagation()}
+                    onDoubleClick={(e) => e.stopPropagation()}
+                    className="bg-slate-900 border border-slate-700 rounded px-2 py-1 text-[11px] text-white focus:outline-none focus:border-indigo-400 flex-1 min-w-0 nodrag shadow-inner"
+                  />
+                ) : (
+                  <span className="text-[10px] font-bold flex-1 min-w-0 truncate select-none nodrag cursor-text">
+                    {review.text}
+                  </span>
+                )}
+                
+                <button 
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    window.dispatchEvent(new CustomEvent('UI_ACTION:DELETE_NODE_REVIEW', { detail: { id, uuid: review.uuid } }));
+                  }}
+                  className="hover:text-red-400 text-slate-400 transition-colors shrink-0 ml-1 p-0.5 nodrag bg-slate-800/50 rounded-md"
+                >
+                  <X className="w-3 h-3" />
+                </button>
+              </motion.div>
+            );
+          })}
         </AnimatePresence>
       </div>
 
@@ -160,7 +206,7 @@ const WorkflowNode = ({ data, id }: any) => {
             initial={{ opacity: 0, scale: 0.9, y: 10 }}
             animate={{ opacity: 1, scale: 1, y: 0 }}
             exit={{ opacity: 0, scale: 0.9, y: 10 }}
-            className="absolute inset-x-0 -bottom-16 bg-slate-800 border border-indigo-500/30 rounded-xl p-2 shadow-2xl z-[60] nodrag"
+            className="absolute inset-x-0 -top-[2.5rem] bg-slate-800 border border-indigo-500/30 rounded-xl p-2 shadow-2xl z-[60] nodrag"
           >
             <form onSubmit={(e) => { e.preventDefault(); e.stopPropagation(); handleSubmitReview(e); }} className="flex gap-2">
               <input 
@@ -169,16 +215,9 @@ const WorkflowNode = ({ data, id }: any) => {
                 value={reviewText}
                 onChange={(e) => setReviewText(e.target.value)}
                 onClick={(e) => e.stopPropagation()}
-                placeholder="What to modify?"
+                placeholder="What to modify? (Press Enter)"
                 className="flex-1 bg-slate-900 border border-slate-700 rounded-lg px-2 py-1 text-[10px] text-white focus:outline-none focus:border-indigo-500 nodrag"
               />
-              <button 
-                type="submit"
-                onClick={(e) => e.stopPropagation()}
-                className="bg-indigo-600 p-1 rounded-lg text-white hover:bg-indigo-500 transition-colors nodrag"
-              >
-                <ArrowRight className="w-3 h-3" />
-              </button>
             </form>
           </motion.div>
         )}
@@ -246,6 +285,7 @@ export default function WorkflowVisualizer() {
   const [activeTab, setActiveTab] = useState<'history' | 'library'>('library');
   const [incomingQueue, setIncomingQueue] = useState<{ type: 'node' | 'edge' | 'remove_node' | 'remove_edge', data: any }[]>([]);
   const [messages, setMessages] = useState<MemoryMessage[]>([]);
+  const [pendingReviews, setPendingReviews] = useState<{id: string, text: string, uuid: string}[]>([]);
   const [workflowId, setWorkflowId] = useState<string | null>(null);
   
   const socketRef = useRef<Socket | null>(null);
@@ -306,29 +346,62 @@ export default function WorkflowVisualizer() {
 
     const handleManualSubmitReview = (e: any) => {
       const { id, feedback } = e.detail;
+      const uuid = window.crypto.randomUUID();
       
       setNodes((prevNodes) => prevNodes.map(node => {
         if (node.id === id) {
           const reviews = (node.data?.reviews || []) as any[];
           return {
             ...node,
-            data: { ...node.data, reviews: [...reviews, feedback] }
+            data: { ...node.data, reviews: [...reviews, { text: feedback, uuid }] }
           };
         }
         return node;
       }));
 
-      // Trigger command submission with the special ID prefix
-      submitCommandRef.current?.(`[NODE_REVISION_REQUEST: ${id}] "${feedback}"`);
+      // Add to pending reviews queue instead of immediate submit
+      setPendingReviews(prev => [...prev, { id, text: feedback, uuid }]);
+    };
+
+    const handleEditNodeReview = (e: any) => {
+      const { id, uuid, newText } = e.detail;
+      setPendingReviews(prev => prev.map(p => p.uuid === uuid ? { ...p, text: newText } : p));
+      setNodes(prev => prev.map(n => {
+        if (n.id === id) {
+          return {
+            ...n,
+            data: { ...n.data, reviews: ((n.data.reviews || []) as any[]).map((r:any) => r.uuid === uuid ? { ...r, text: newText } : r) }
+          };
+        }
+        return n;
+      }));
+    };
+
+    const handleDeleteNodeReview = (e: any) => {
+      const { id, uuid } = e.detail;
+      setPendingReviews(prev => prev.filter(p => p.uuid !== uuid));
+      setNodes(prev => prev.map(n => {
+        if (n.id === id) {
+          return {
+            ...n,
+            data: { ...n.data, reviews: ((n.data.reviews || []) as any[]).filter((r:any) => r.uuid !== uuid) }
+          };
+        }
+        return n;
+      }));
     };
 
     window.addEventListener('UI_ACTION:REMOVE_NODE' as any, handleManualRemoveNode);
     window.addEventListener('UI_ACTION:SUBMIT_NODE_REVIEW' as any, handleManualSubmitReview);
+    window.addEventListener('UI_ACTION:EDIT_NODE_REVIEW' as any, handleEditNodeReview);
+    window.addEventListener('UI_ACTION:DELETE_NODE_REVIEW' as any, handleDeleteNodeReview);
 
     return () => {
       socketRef.current?.disconnect();
       window.removeEventListener('UI_ACTION:REMOVE_NODE' as any, handleManualRemoveNode);
       window.removeEventListener('UI_ACTION:SUBMIT_NODE_REVIEW' as any, handleManualSubmitReview);
+      window.removeEventListener('UI_ACTION:EDIT_NODE_REVIEW' as any, handleEditNodeReview);
+      window.removeEventListener('UI_ACTION:DELETE_NODE_REVIEW' as any, handleDeleteNodeReview);
     };
   }, []);
 
@@ -571,11 +644,21 @@ export default function WorkflowVisualizer() {
   }, [reconcileWorkflow]);
 
   const submitCommand = async (text: string) => {
-    if (!text.trim() || isArchitectThinking) return;
+    if ((!text.trim() && pendingReviews.length === 0) || isArchitectThinking) return;
 
     setIsArchitectThinking(true);
     ensureWorkflowId();
     
+    // Aggregating pending reviews into one text block
+    let aggregatedPrompt = "";
+    pendingReviews.forEach(pr => {
+      aggregatedPrompt += `[NODE_REVISION_REQUEST: ${pr.id}] "${pr.text}"\n`;
+    });
+    
+    if (text.trim()) {
+       aggregatedPrompt += `\nUser request:\n${text}`;
+    }
+
     // SYNC: Inject the absolute source of truth (current JSON Blueprint) 
     const currentBlueprint = {
       nodes: nodes.map(n => ({ id: n.id, reviews: n.data.reviews || [] })),
@@ -584,9 +667,14 @@ export default function WorkflowVisualizer() {
     
     const messagesWithSync = memoryManager.logAction(messages, memoryManager.formatCurrentState(currentBlueprint));
 
-    // Optimistically append the user message
-    const newMessages: MemoryMessage[] = [...messagesWithSync, { role: 'user', content: text }];
+    // Optimistically append the aggregated message
+    const newMessages: MemoryMessage[] = [...messagesWithSync, { role: 'user', content: aggregatedPrompt.trim() }];
     setMessages(newMessages);
+
+    // Clear the pending queue immediately
+    setPendingReviews([]);
+    // Clear the node visual labels
+    setNodes(prev => prev.map(n => ({ ...n, data: { ...n.data, reviews: [] } })));
 
     try {
       const res = await fetch('/api/command', {
@@ -615,7 +703,7 @@ export default function WorkflowVisualizer() {
 
   const handleSendCommand = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!command.trim()) return;
+    if (!command.trim() && pendingReviews.length === 0) return;
     const currentCommand = command;
     setCommand('');
     await submitCommand(currentCommand);
@@ -909,7 +997,19 @@ export default function WorkflowVisualizer() {
 
         {/* Command Bar Interface */}
         <div className="p-8 bg-slate-900 border-t border-slate-800 z-20">
-          <div className="max-w-4xl mx-auto">
+          <div className="max-w-4xl mx-auto flex flex-col gap-3">
+            
+            {/* Pending Reviews Queue UI */}
+            {pendingReviews.length > 0 && (
+              <div className="flex flex-col gap-1 px-4 pointer-events-none mb-2">
+                 {pendingReviews.map(pr => (
+                   <div key={pr.uuid} className="text-[11px] text-slate-400 font-medium">
+                      Added review for node <span className="font-bold text-indigo-400 uppercase">{pr.id}</span>
+                   </div>
+                 ))}
+              </div>
+            )}
+
             <form onSubmit={handleSendCommand} className="relative group/input shadow-3xl rounded-2xl overflow-hidden bg-slate-800 p-1">
               <div className="absolute inset-y-0 left-6 flex items-center pointer-events-none z-10">
                 <Command className="w-5 h-5 text-slate-500 group-focus-within/input:text-indigo-400 transition-colors" />
