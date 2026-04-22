@@ -78,7 +78,23 @@ const IconMap: Record<string, React.ReactNode> = {
 };
 
 // Custom Node Component to preserve the premium 3D aesthetic
+// Custom Node Component to preserve the premium 3D aesthetic
 const WorkflowNode = ({ data, id }: any) => {
+  const [isReviewing, setIsReviewing] = useState(false);
+  const [reviewText, setReviewText] = useState('');
+
+  const handleSubmitReview = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!reviewText.trim()) return;
+    
+    window.dispatchEvent(new CustomEvent('UI_ACTION:SUBMIT_NODE_REVIEW', { 
+      detail: { id, feedback: reviewText.trim() } 
+    }));
+    
+    setReviewText('');
+    setIsReviewing(false);
+  };
+
   return (
     <div className={cn(
       "group relative p-4 rounded-xl border-b-4 w-60 shadow-2xl transition-all hover:-translate-y-1 bg-slate-900/90 backdrop-blur-xl border-slate-800",
@@ -91,15 +107,82 @@ const WorkflowNode = ({ data, id }: any) => {
       data.color === 'violet' && "border-violet-500/50 shadow-violet-500/10",
       data.color?.startsWith('slate') && "border-slate-600/50 shadow-slate-600/10"
     )}>
-      {/* Delete Button */}
-      <button 
-        onClick={() => {
-          window.dispatchEvent(new CustomEvent('UI_ACTION:REMOVE_NODE', { detail: { id } }));
-        }}
-        className="absolute -top-2 -right-2 w-6 h-6 rounded-full bg-slate-800 border border-slate-700 items-center justify-center text-slate-500 hover:text-red-400 hover:border-red-500/50 transition-all opacity-0 group-hover:opacity-100 z-50 flex shadow-xl"
-      >
-        <X className="w-3 h-3" />
-      </button>
+      
+      {/* Review Labels (Always Shown) */}
+      <div className="absolute -top-10 left-0 w-full flex flex-col gap-1 items-start pointer-events-none">
+        <AnimatePresence>
+          {data.reviews?.map((review: string, idx: number) => (
+            <motion.div
+              key={`${id}-review-${idx}`}
+              initial={{ opacity: 0, x: -10, scale: 0.8 }}
+              animate={{ opacity: 1, x: 0, scale: 1 }}
+              className="bg-indigo-600/90 backdrop-blur-md text-white text-[9px] font-bold px-2 py-1 rounded-lg border border-indigo-400/50 shadow-lg pointer-events-auto max-w-[200px] truncate"
+            >
+              <Sparkles className="w-2 h-2 inline-block mr-1" />
+              {review}
+            </motion.div>
+          ))}
+        </AnimatePresence>
+      </div>
+
+      {/* Action Buttons (Hover) */}
+      <div className="absolute -top-2 -right-2 flex gap-1 z-50 opacity-0 group-hover:opacity-100 transition-all nodrag">
+        <button 
+          onClick={(e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            setIsReviewing(!isReviewing);
+          }}
+          className={cn(
+            "w-7 h-7 rounded-full bg-slate-800 border border-slate-700 flex items-center justify-center transition-all shadow-xl",
+            isReviewing ? "text-indigo-400 border-indigo-500/50 bg-slate-700" : "text-slate-500 hover:text-indigo-400 hover:border-indigo-500/50"
+          )}
+        >
+          <MessageSquare className="w-3.5 h-3.5" />
+        </button>
+        
+        <button 
+          onClick={(e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            window.dispatchEvent(new CustomEvent('UI_ACTION:REMOVE_NODE', { detail: { id } }));
+          }}
+          className="w-7 h-7 rounded-full bg-slate-800 border border-slate-700 flex items-center justify-center text-slate-500 hover:text-red-400 hover:border-red-500/50 transition-all shadow-xl"
+        >
+          <X className="w-3.5 h-3.5" />
+        </button>
+      </div>
+
+      {/* Review Input Box */}
+      <AnimatePresence>
+        {isReviewing && (
+          <motion.div
+            initial={{ opacity: 0, scale: 0.9, y: 10 }}
+            animate={{ opacity: 1, scale: 1, y: 0 }}
+            exit={{ opacity: 0, scale: 0.9, y: 10 }}
+            className="absolute inset-x-0 -bottom-16 bg-slate-800 border border-indigo-500/30 rounded-xl p-2 shadow-2xl z-[60] nodrag"
+          >
+            <form onSubmit={(e) => { e.preventDefault(); e.stopPropagation(); handleSubmitReview(e); }} className="flex gap-2">
+              <input 
+                autoFocus
+                type="text"
+                value={reviewText}
+                onChange={(e) => setReviewText(e.target.value)}
+                onClick={(e) => e.stopPropagation()}
+                placeholder="What to modify?"
+                className="flex-1 bg-slate-900 border border-slate-700 rounded-lg px-2 py-1 text-[10px] text-white focus:outline-none focus:border-indigo-500 nodrag"
+              />
+              <button 
+                type="submit"
+                onClick={(e) => e.stopPropagation()}
+                className="bg-indigo-600 p-1 rounded-lg text-white hover:bg-indigo-500 transition-colors nodrag"
+              >
+                <ArrowRight className="w-3 h-3" />
+              </button>
+            </form>
+          </motion.div>
+        )}
+      </AnimatePresence>
 
       <motion.div 
         initial={{ scale: 0.8, opacity: 0 }}
@@ -167,6 +250,11 @@ export default function WorkflowVisualizer() {
   
   const socketRef = useRef<Socket | null>(null);
   const reconcileRef = useRef<any>(null);
+  const submitCommandRef = useRef<any>(null);
+
+  useEffect(() => {
+    submitCommandRef.current = submitCommand;
+  });
 
   // Initialize WebSocket
   useEffect(() => {
@@ -216,11 +304,31 @@ export default function WorkflowVisualizer() {
       socketRef.current?.emit('UI_COMMAND:REMOVE_NODE', { id });
     };
 
+    const handleManualSubmitReview = (e: any) => {
+      const { id, feedback } = e.detail;
+      
+      setNodes((prevNodes) => prevNodes.map(node => {
+        if (node.id === id) {
+          const reviews = (node.data?.reviews || []) as any[];
+          return {
+            ...node,
+            data: { ...node.data, reviews: [...reviews, feedback] }
+          };
+        }
+        return node;
+      }));
+
+      // Trigger command submission with the special ID prefix
+      submitCommandRef.current?.(`[NODE_REVISION_REQUEST: ${id}] "${feedback}"`);
+    };
+
     window.addEventListener('UI_ACTION:REMOVE_NODE' as any, handleManualRemoveNode);
+    window.addEventListener('UI_ACTION:SUBMIT_NODE_REVIEW' as any, handleManualSubmitReview);
 
     return () => {
       socketRef.current?.disconnect();
       window.removeEventListener('UI_ACTION:REMOVE_NODE' as any, handleManualRemoveNode);
+      window.removeEventListener('UI_ACTION:SUBMIT_NODE_REVIEW' as any, handleManualSubmitReview);
     };
   }, []);
 
@@ -376,9 +484,18 @@ export default function WorkflowVisualizer() {
     try {
       // 1. Build the Node Library from the blueprint manifest
       const nodeLibrary = new Map<string, Node>();
+      
+      // We need current nodes to preserve reviews
+      let currentNodes: Node[] = [];
+      setNodes(prev => { currentNodes = prev; return prev; });
+
       blueprint.nodes.forEach(type => {
         const nodeInfo = NODE_TYPES[type as keyof typeof NODE_TYPES];
         if (!nodeInfo) return;
+
+        // PRESERVE REVIEWS if the node already exists
+        const existingNode = currentNodes.find(n => n.id === type);
+        const existingReviews = (existingNode?.data?.reviews || []) as any[];
 
         nodeLibrary.set(type, {
           id: type,
@@ -388,7 +505,8 @@ export default function WorkflowVisualizer() {
             label: nodeInfo.label,
             description: nodeInfo.desc,
             icon: nodeInfo.icon,
-            color: nodeInfo.color
+            color: nodeInfo.color,
+            reviews: existingReviews
           }
         });
       });
@@ -452,27 +570,22 @@ export default function WorkflowVisualizer() {
     reconcileRef.current = reconcileWorkflow;
   }, [reconcileWorkflow]);
 
-  const handleSendCommand = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!command.trim() || isArchitectThinking) return;
+  const submitCommand = async (text: string) => {
+    if (!text.trim() || isArchitectThinking) return;
 
-    const currentCommand = command;
-    setCommand('');
     setIsArchitectThinking(true);
-    
     ensureWorkflowId();
     
     // SYNC: Inject the absolute source of truth (current JSON Blueprint) 
-    // so the Architect doesn't have to guess from the logs.
     const currentBlueprint = {
-      nodes: nodes.map(n => n.id),
+      nodes: nodes.map(n => ({ id: n.id, reviews: n.data.reviews || [] })),
       edges: edges.map(e => ({ source: e.source, target: e.target }))
     };
     
     const messagesWithSync = memoryManager.logAction(messages, memoryManager.formatCurrentState(currentBlueprint));
 
     // Optimistically append the user message
-    const newMessages: MemoryMessage[] = [...messagesWithSync, { role: 'user', content: currentCommand }];
+    const newMessages: MemoryMessage[] = [...messagesWithSync, { role: 'user', content: text }];
     setMessages(newMessages);
 
     try {
@@ -480,14 +593,12 @@ export default function WorkflowVisualizer() {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ 
-          messages: newMessages // PASSING PROPER HISTORY TO AI
+          messages: newMessages 
         }),
       });
       
       if (res.ok) {
         const data = await res.json();
-        
-        // Save the AI's actions to memory so it knows what it did in future turns
         setMessages(prev => [
           ...prev, 
           { 
@@ -498,9 +609,16 @@ export default function WorkflowVisualizer() {
       }
     } catch (error) {
       console.error('Failed to send command:', error);
-      setIsArchitectThinking(false); // Clear on error
-    } 
-    // Removed finally { setIsArchitectThinking(false) } to let reconcileWorkflow handle it
+      setIsArchitectThinking(false);
+    }
+  };
+
+  const handleSendCommand = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!command.trim()) return;
+    const currentCommand = command;
+    setCommand('');
+    await submitCommand(currentCommand);
   };
 
   const handleSaveWorkflow = async () => {
