@@ -497,13 +497,26 @@ export default function WorkflowVisualizer() {
     
     // SYNC: Inject the absolute source of truth (current JSON) into history 
     // so the Architect doesn't have to guess from the logs.
-    const currentLogicalState = nodes.map(n => {
-      const edge = edges.find(e => e.target === n.id);
-      return { 
-        node_name: n.id, 
-        source: edge?.source || 'none',
-        target: 'none' // The AI will recalculate targets
-      };
+    const currentLogicalState: any[] = [];
+    
+    // Represent every connection accurately
+    edges.forEach(edge => {
+      currentLogicalState.push({ 
+        node_name: edge.source, 
+        source: 'none',
+        target: edge.target
+      });
+    });
+
+    // Also include isolated nodes
+    nodes.forEach(node => {
+      if (!edges.some(e => e.source === node.id || e.target === node.id)) {
+        currentLogicalState.push({ 
+          node_name: node.id, 
+          source: 'none',
+          target: 'none'
+        });
+      }
     });
     
     const messagesWithSync = memoryManager.logAction(messages, memoryManager.formatCurrentState(currentLogicalState));

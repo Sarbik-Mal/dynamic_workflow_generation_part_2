@@ -1,8 +1,17 @@
-import { openai } from '@ai-sdk/openai';
-import { generateObject } from 'ai';
+import { ChatOpenAI } from '@langchain/openai';
+import { SystemMessage, HumanMessage, AIMessage, BaseMessage } from '@langchain/core/messages';
 import { z } from 'zod';
 import { io, Socket } from 'socket.io-client';
 import { NODE_TYPES } from '@/lib/nodes';
+
+// Define the structured output schema
+const workflowSchema = z.object({
+  workflow: z.array(z.object({
+    node_name: z.string().describe("The name/ID of the node being connected."),
+    source: z.string().describe("The node type it receives data from, or 'none'."),
+    target: z.string().describe("The node type it sends data to, or 'none'.")
+  })).describe("The complete list of all connections and nodes that should exist on the canvas.")
+});
 
 // Helper to connect once and return a socket promise
 const connectSocket = () => {
@@ -30,81 +39,79 @@ const connectSocket = () => {
 };
 
 export async function POST(req: Request) {
-  // Receive the conversation history (user and assistant messages) from the frontend
   const { messages } = await req.json(); 
 
-  const systemPrompt = `You are the Workflow Architect. Convert the user's exact request into a sequence of logical operations.
-      
-Nodes available:
-${Object.entries(NODE_TYPES).map(([id, n]) => `- ${id}: ${n.label} (${n.desc})`).join('\n')}
+  const systemPrompt = `You are the **Master Architect**, a high-precision graph state engine. Your role is to maintain the "Absolute Blueprint" of a visual workflow.
 
-CRITICAL RULES:
-1. Map the user's request strictly to the exact node types available.
-2. Do NOT add any nodes that the user did not explicitly ask for.
-3. For each step, specify the "node_name" (which must be a valid node type), its "source" (the node type it receives data from, or "none"), and its "target" (the node type it sends data to, or "none").
-4. IMPORTANT: The "source" and "target" fields MUST contain exactly ONE node type ID or "none". Do NOT use commas, lists, or multiple names in a single field.
-5. If a node has multiple sources (many-to-one), create MULTIPLE separate objects in the "workflow" array for each connection.
-6. Ensure a logical directed flow from sources to sinks.
-7. Consider the conversation history and [SYSTEM_SYNC] logs to understand what nodes have already been added or manually modified by the user.`;
+### THE BLUEPRINT PHILOSOPHY
+Your output is the **FINAL DESIRED STATE** of the entire canvas.
+1. **Durable State**: If you want a node or connection to persist, it MUST be in your output JSON.
+2. **Declarative Deletion**: If you want to remove something, simply omit it from your output.
+3. **Idempotency**: If the user asks for no changes, your output should exactly match the current state.
 
-  // Combine system prompt with the ongoing conversation history
-  const fullMemory = [
-    { role: 'system', content: systemPrompt },
-    ...messages
+### RECONCILIATION & GROUND TRUTH
+You will see messages prefixed with \`[SYSTEM_SYNC] CURRENT_CANVAS_GRAPH\`. This is the literal, physical state of the board.
+- **Priority**: Always treat the latest \`[SYSTEM_SYNC]\` as the ground truth over any previous assistant messages.
+- **Manual Actions**: If the user manually connected nodes, you will see it in the sync. You MUST include these manual links in your output unless asked to remove them.
+
+### NODES AVAILABLE
+${Object.entries(NODE_TYPES).map(([id, n]) => `- ${id}: ${n.label} - ${n.desc}`).join('\n')}
+
+### CONSTRUCTION RULES
+1. **Single Entry**: Each object in the "workflow" array represents one directed link or a standalone node.
+2. **Many-to-One**: If a node has 3 sources, create 3 separate objects in the array.
+3. **Accuracy**: Use only the exact Node IDs provided above.
+4. **Logic**: Ensure a logical data flow from sources (start) to sinks (end). 
+
+Your goal is to be a perfect state machine. If the user says "add X", you return the CURRENT state PLUS X. If they say "remove Y", you return the CURRENT state MINUS Y.`;
+
+  // Convert raw message objects to LangChain Message classes
+  const langChainMessages: BaseMessage[] = [
+    new SystemMessage(systemPrompt),
+    ...messages.map((m: any) => {
+      if (m.role === 'user') return new HumanMessage(m.content);
+      if (m.role === 'assistant') return new AIMessage(m.content);
+      if (m.role === 'system') return new SystemMessage(m.content);
+      return new HumanMessage(m.content);
+    })
   ];
 
-  // Print the complete memory payload to the terminal
+  // LOGGING FOR DEBUGGING
   console.log('\n=============================================');
-  console.log('--- FULL CONVERSATION HISTORY & MEMORY ---');
-  console.log(JSON.stringify(fullMemory, null, 2));
+  console.log('--- MASTER ARCHITECT: INCOMING BLUEPRINT SYNC ---');
+  console.log(messages[messages.length - 2]?.content); // Show the latest SYNC message
+  console.log('--- USER REQUEST ---');
+  console.log(messages[messages.length - 1]?.content);
   console.log('=============================================\n');
 
   try {
-    // Generate the workflow sequence using the full memory array
-    const { object } = await generateObject({
-      model: openai('gpt-4o-mini'),
-      messages: fullMemory as any, // AI SDK accepts the combined system/user/assistant array
-      schema: z.object({
-        workflow: z.array(z.object({
-          node_name: z.string(),
-          source: z.string(),
-          target: z.string()
-        }))
-      })
-    });
+    const model = new ChatOpenAI({
+      modelName: 'gpt-4o-mini',
+      temperature: 0,
+    }).withStructuredOutput(workflowSchema);
 
-    const finalObject = object;
+    const result = await model.invoke(langChainMessages);
+    const finalWorkflow = result.workflow;
 
-    console.log('AGENT GENERATED RAW WORKFLOW:', JSON.stringify(finalObject.workflow, null, 2));
+    console.log('MASTER ARCHITECT GENERATED BLUEPRINT:', JSON.stringify(finalWorkflow, null, 2));
 
-    console.log(`[Architect] Opening connection for workflow update...`);
+    // WebSocket Emission
     let socket: Socket;
     try {
       socket = await connectSocket();
-    } catch (err) {
-      console.error('Failed to connect socket:', err);
-      return Response.json({ error: 'WebSocket connection failed' }, { status: 500 });
-    }
-
-    try {
-      socket.emit('UI_COMMAND:UPDATE_WORKFLOW', { 
-        workflow: finalObject.workflow 
-      });
-      console.log(`[Architect] Emitted logical workflow update.`);
-    } finally {
+      socket.emit('UI_COMMAND:UPDATE_WORKFLOW', { workflow: finalWorkflow });
       await new Promise(r => setTimeout(r, 500));
       socket.disconnect();
-      console.log(`[Architect] Connection closed.`);
+    } catch (err) {
+      console.error('WebSocket Sync Failed:', err);
     }
 
-    console.log('-------------------------------------\n');
-    
     return Response.json({ 
-      text: 'Workflow created successfully.',
-      workflow: finalObject.workflow // Sent back to append to the assistant's memory
+      text: 'Blueprint updated successfully.',
+      workflow: finalWorkflow 
     });
   } catch (error: any) {
-    console.error('AI Workflow Error:', error);
+    console.error('Master Architect Error:', error);
     return Response.json({ error: error.message }, { status: 500 });
   }
 }

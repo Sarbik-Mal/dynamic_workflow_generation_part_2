@@ -12,10 +12,25 @@ export const memoryManager = {
   /**
    * Appends an action log to the history
    */
+  /**
+   * Appends an action log to the history.
+   * If the action is a CURRENT_CANVAS_GRAPH update, it removes all previous 
+   * instances to prevent memory bloat and keep the history clean.
+   */
   logAction: (messages: MemoryMessage[], action: string): MemoryMessage[] => {
+    const isGraphSync = action.includes('CURRENT_CANVAS_GRAPH');
+    
+    // If we are providing a new state sync, remove old ones to save tokens and avoid confusion
+    const filteredMessages = isGraphSync 
+      ? messages.filter(m => !m.content.includes('CURRENT_CANVAS_GRAPH'))
+      : messages;
+
+    // Avoid double prefixing if the action already contains [SYSTEM_SYNC]
+    const content = action.startsWith('[SYSTEM_SYNC]') ? action : `[SYSTEM_SYNC] ${action}`;
+
     return [
-      ...messages,
-      { role: 'user', content: `[SYSTEM_SYNC] ${action}` }
+      ...filteredMessages,
+      { role: 'user', content }
     ];
   },
 
@@ -51,6 +66,6 @@ export const memoryManager = {
    * Formats the entire current workflow JSON for memory syncing
    */
   formatCurrentState: (workflow: any[]): string => {
-    return `Current logical workflow state: ${JSON.stringify(workflow)}. Use this as your source of truth.`;
+    return `[SYSTEM_SYNC] CURRENT_CANVAS_GRAPH: ${JSON.stringify(workflow)}. This is the absolute ground truth of what is currently visible to the user.`;
   }
 };
