@@ -16,8 +16,7 @@ const io = new Server(httpServer, {
   }
 });
 
-// Use port 4000 as per previous setup
-const PORT = 4000;
+const PORT = process.env.PORT;
 httpServer.listen(PORT, () => {
   console.error(`WebSocket server listening on port ${PORT}`);
 });

@@ -15,7 +15,7 @@ const blueprintSchema = z.object({
 
 // Helper to connect once and return a socket promise
 const connectSocket = () => {
-  const socket = io(process.env.NEXT_PUBLIC_WS_URL || 'http://localhost:4000', {
+  const socket = io(process.env.NEXT_PUBLIC_WS_URL, {
     transports: ['websocket'],
   });
 
