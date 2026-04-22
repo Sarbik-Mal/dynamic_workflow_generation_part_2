@@ -43,6 +43,13 @@ export default function WorkflowVisualizer() {
   const [pendingReviews, setPendingReviews] = useState<{id: string, text: string, uuid: string}[]>([]);
   const [workflowId, setWorkflowId] = useState<string | null>(null);
   
+  // Split View / AI Preview States
+  const [isSplitView, setIsSplitView] = useState(false);
+  const [proposedNodes, setProposedNodes, onProposedNodesChange] = useNodesState<Node>([]);
+  const [proposedEdges, setProposedEdges, onProposedEdgesChange] = useEdgesState<Edge>([]);
+  const [pendingMessages, setPendingMessages] = useState<MemoryMessage[]>([]);
+  const [assistantMessage, setAssistantMessage] = useState<MemoryMessage | null>(null);
+  
   const socketRef = useRef<Socket | null>(null);
   const reconcileRef = useRef<any>(null);
   const submitCommandRef = useRef<any>(null);
@@ -393,6 +400,79 @@ export default function WorkflowVisualizer() {
     }
   }, [setEdges, setNodes, ensureWorkflowId]); 
 
+  const reconcilePreviewWorkflow = useCallback(async (blueprint: { nodes: string[], edges: {source: string, target: string}[] }) => {
+    if (!blueprint || !blueprint.nodes) return;
+
+    try {
+      const nodeLibrary = new Map<string, Node>();
+      
+      // Use proposedNodes to preserve reviews if needed, but usually it's fresh
+      blueprint.nodes.forEach(type => {
+        const nodeInfo = NODE_TYPES[type as keyof typeof NODE_TYPES];
+        if (!nodeInfo) return;
+
+        nodeLibrary.set(type, {
+          id: type,
+          type: 'workflowNode',
+          position: { x: Math.random() * 400, y: Math.random() * 400 },
+          data: {
+            label: nodeInfo.label,
+            description: nodeInfo.desc,
+            icon: nodeInfo.icon,
+            color: nodeInfo.color,
+            reviews: []
+          }
+        });
+      });
+
+      const validatedNodeIds = new Set(Array.from(nodeLibrary.keys()));
+      
+      // Update proposed nodes and edges
+      setProposedNodes(Array.from(nodeLibrary.values()));
+      
+      const newEdges: Edge[] = blueprint.edges.map(edge => ({
+        id: `e-${edge.source}-${edge.target}`,
+        source: edge.source,
+        target: edge.target,
+        type: 'smoothstep',
+        animated: true,
+        style: { strokeWidth: 3, stroke: '#818cf8', opacity: 1 }
+      }));
+
+      setProposedEdges(newEdges);
+
+      // Trigger auto-layout for proposed elements
+      const { nodes: layoutedNodes, edges: layoutedEdges } = await getLayoutedElements(
+        Array.from(nodeLibrary.values()), 
+        newEdges
+      );
+      setProposedNodes(layoutedNodes);
+      setProposedEdges(layoutedEdges);
+
+    } catch (error) {
+      console.error('[Preview] Reconciliation failed:', error);
+    }
+  }, []);
+
+  const handleAccept = () => {
+    setNodes(proposedNodes);
+    setEdges(proposedEdges);
+    if (assistantMessage) {
+      setMessages([...pendingMessages, assistantMessage]);
+    }
+    setIsSplitView(false);
+    setPendingMessages([]);
+    setAssistantMessage(null);
+  };
+
+  const handleReject = () => {
+    setIsSplitView(false);
+    setProposedNodes([]);
+    setProposedEdges([]);
+    setPendingMessages([]);
+    setAssistantMessage(null);
+  };
+
   // Sync reconcileWorkflow to ref for socket listener
   useEffect(() => {
     reconcileRef.current = reconcileWorkflow;
@@ -424,7 +504,7 @@ export default function WorkflowVisualizer() {
 
     // Optimistically append the aggregated message
     const newMessages: MemoryMessage[] = [...messagesWithSync, { role: 'user', content: aggregatedPrompt.trim() }];
-    setMessages(newMessages);
+    setPendingMessages(newMessages);
 
     // Clear the pending queue immediately
     setPendingReviews([]);
@@ -442,16 +522,18 @@ export default function WorkflowVisualizer() {
       
       if (res.ok) {
         const data = await res.json();
-        setMessages(prev => [
-          ...prev, 
-          { 
-            role: 'assistant', 
-            content: `I executed the following blueprint update: ${JSON.stringify(data.blueprint)}`
-          }
-        ]);
+        const aiMessage: MemoryMessage = { 
+          role: 'assistant', 
+          content: `I executed the following blueprint update: ${JSON.stringify(data.blueprint)}`
+        };
+
+        setAssistantMessage(aiMessage);
+        setIsSplitView(true);
+        reconcilePreviewWorkflow(data.blueprint);
       }
     } catch (error) {
       console.error('Failed to send command:', error);
+    } finally {
       setIsArchitectThinking(false);
     }
   };
@@ -568,31 +650,83 @@ export default function WorkflowVisualizer() {
         />
 
         {/* The Graph Canvas */}
-        <div className="flex-1 relative bg-slate-950">
-           <ReactFlow
-             nodes={nodes}
-             edges={edges}
-             onNodesChange={onNodesChange}
-             onEdgesChange={onEdgesChange}
-             onConnect={onConnect}
-             onEdgesDelete={onEdgesDelete}
-             nodeTypes={nodeTypes}
-             connectionLineType={ConnectionLineType.SmoothStep}
-             onInit={setRfInstance}
-             minZoom={0.2}
-             maxZoom={1.5}
-             proOptions={{ hideAttribution: true }}
-           >
-             <Background color="#1e293b" gap={24} size={1} />
-             <Controls className="!bg-slate-900 !shadow-2xl !border-slate-800 !rounded-xl overflow-hidden !fill-white" />
-             
-             <Panel position="top-right" className="bg-slate-900/80 backdrop-blur p-2 rounded-xl border border-slate-800 shadow-2xl">
-                <div className="flex items-center gap-3">
-                  <div className="w-2 h-2 rounded-full bg-emerald-500" />
-                  <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Auto-Layout: ELK Layered</span>
+        <div className={`flex-1 relative bg-slate-950 flex ${isSplitView ? 'flex-row' : 'flex-col'}`}>
+           <div className={`relative ${isSplitView ? 'flex-1 border-r border-slate-800' : 'h-full w-full'}`}>
+             {isSplitView && (
+               <div className="absolute top-4 left-4 z-10 px-3 py-1 bg-slate-900/80 rounded-lg text-[10px] font-bold text-slate-400 uppercase tracking-widest border border-slate-800">
+                 Current Version
+               </div>
+             )}
+             <ReactFlow
+               nodes={nodes}
+               edges={edges}
+               onNodesChange={onNodesChange}
+               onEdgesChange={onEdgesChange}
+               onConnect={onConnect}
+               onEdgesDelete={onEdgesDelete}
+               nodeTypes={nodeTypes}
+               connectionLineType={ConnectionLineType.SmoothStep}
+               onInit={setRfInstance}
+               minZoom={0.2}
+               maxZoom={1.5}
+               proOptions={{ hideAttribution: true }}
+             >
+               <Background color="#1e293b" gap={24} size={1} />
+               <Controls className="!bg-slate-900 !shadow-2xl !border-slate-800 !rounded-xl overflow-hidden !fill-white" />
+               
+               {!isSplitView && (
+                 <Panel position="top-right" className="bg-slate-900/80 backdrop-blur p-2 rounded-xl border border-slate-800 shadow-2xl">
+                    <div className="flex items-center gap-3">
+                      <div className="w-2 h-2 rounded-full bg-emerald-500" />
+                      <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Auto-Layout: ELK Layered</span>
+                    </div>
+                 </Panel>
+               )}
+             </ReactFlow>
+           </div>
+
+           {isSplitView && (
+             <div className="relative flex-1 bg-slate-900/30">
+                <div className="absolute top-4 left-4 z-10 px-3 py-1 bg-indigo-600/80 rounded-lg text-[10px] font-bold text-white uppercase tracking-widest border border-indigo-500">
+                  Proposed Version
                 </div>
-             </Panel>
-           </ReactFlow>
+                <ReactFlow
+                  nodes={proposedNodes}
+                  edges={proposedEdges}
+                  onNodesChange={onProposedNodesChange}
+                  onEdgesChange={onProposedEdgesChange}
+                  nodeTypes={nodeTypes}
+                  connectionLineType={ConnectionLineType.SmoothStep}
+                  minZoom={0.2}
+                  maxZoom={1.5}
+                  proOptions={{ hideAttribution: true }}
+                >
+                  <Background color="#1e293b" gap={24} size={1} />
+                  <Controls className="!bg-slate-900 !shadow-2xl !border-slate-800 !rounded-xl overflow-hidden !fill-white" />
+                </ReactFlow>
+
+                {/* Accept/Reject Overlay */}
+                <div className="absolute bottom-10 left-1/2 -translate-x-1/2 z-50 flex items-center gap-4 bg-slate-900/90 backdrop-blur-xl border border-slate-800 p-4 rounded-2xl shadow-[0_0_50px_rgba(0,0,0,0.5)]">
+                  <div className="flex flex-col gap-1 mr-4">
+                    <span className="text-xs font-bold text-slate-200">Review AI changes?</span>
+                    <span className="text-[10px] text-slate-500">Approving will update the live workspace.</span>
+                  </div>
+                  <button 
+                    onClick={handleReject}
+                    className="px-5 py-2.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-white text-xs font-bold transition-all border border-slate-700"
+                  >
+                    Discard Changes
+                  </button>
+                  <button 
+                    onClick={handleAccept}
+                    className="px-5 py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-bold transition-all shadow-lg shadow-indigo-600/30 flex items-center gap-2"
+                  >
+                    <Sparkles className="w-3.5 h-3.5" />
+                    Apply Updates
+                  </button>
+                </div>
+             </div>
+           )}
 
            {/* AI Status Overlay - Keep visible while thinking OR while items are still being built in the queue */}
            <AnimatePresence>

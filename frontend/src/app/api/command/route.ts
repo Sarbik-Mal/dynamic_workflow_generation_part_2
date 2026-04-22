@@ -97,16 +97,8 @@ You are a perfect graph machine. You don't describe "steps"; you describe the "f
 
     console.log('MASTER ARCHITECT GENERATED BLUEPRINT:', JSON.stringify(finalBlueprint, null, 2));
 
-    // WebSocket Emission
-    let socket: Socket;
-    try {
-      socket = await connectSocket();
-      socket.emit('UI_COMMAND:UPDATE_WORKFLOW', { blueprint: finalBlueprint });
-      await new Promise(r => setTimeout(r, 500));
-      socket.disconnect();
-    } catch (err) {
-      console.error('WebSocket Sync Failed:', err);
-    }
+    // WebSocket Emission removed for preview feature
+    // Update is now handled by frontend upon user acceptance.
 
     return Response.json({ 
       text: 'Blueprint updated successfully.',
