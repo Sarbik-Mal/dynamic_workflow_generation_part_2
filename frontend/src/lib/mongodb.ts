@@ -28,7 +28,7 @@ async function connectDB() {
       serverSelectionTimeoutMS: 5000, // Fail fast (5s) if DB is off
     };
 
-    cached.promise = mongoose.connect(MONGODB_URI, opts).then((mongoose) => {
+    cached.promise = mongoose.connect(MONGODB_URI as string, opts).then((mongoose) => {
       return mongoose;
     });
   }
