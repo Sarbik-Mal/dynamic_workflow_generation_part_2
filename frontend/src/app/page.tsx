@@ -23,7 +23,7 @@ import { memoryManager, type MemoryMessage } from '@/lib/memory';
 import { WorkflowNode } from '@/components/workflow/WorkflowNode';
 import { Sidebar } from '@/components/workflow/Sidebar';
 import { Header } from '@/components/workflow/Header';
-import { CommandBar } from '@/components/workflow/CommandBar';
+import { ChatBar } from '@/components/workflow/ChatBar';
 
 const nodeTypes = {
   workflowNode: WorkflowNode,
@@ -524,12 +524,19 @@ export default function WorkflowVisualizer() {
         const data = await res.json();
         const aiMessage: MemoryMessage = { 
           role: 'assistant', 
-          content: `I executed the following blueprint update: ${JSON.stringify(data.blueprint)}`
+          content: data.message // Use the conversational message from the agent
         };
 
         setAssistantMessage(aiMessage);
-        setIsSplitView(true);
-        reconcilePreviewWorkflow(data.blueprint);
+        
+        // Only show preview if there is blueprint data
+        if (data.blueprint && data.blueprint.nodes && data.blueprint.nodes.length > 0) {
+          setIsSplitView(true);
+          reconcilePreviewWorkflow(data.blueprint);
+        } else {
+          // If no blueprint, just commit the message to history immediately
+          setMessages([...newMessages, aiMessage]);
+        }
       }
     } catch (error) {
       console.error('Failed to send command:', error);
@@ -633,119 +640,122 @@ export default function WorkflowVisualizer() {
       />
 
       {/* Main Workspace: React Flow Canvas */}
-      <main className="flex-1 flex flex-col relative">
+      <main className="flex-1 flex flex-row relative min-w-0">
         
-        {/* Header/Controls */}
-        <Header 
-          workflowId={workflowId}
-          onClearCanvas={() => { 
-            setNodes([]); 
-            setEdges([]); 
-            setMessages([]); // Reset memory when the board is cleared
-            setWorkflowId(null);
-          }}
-          handleSaveWorkflow={handleSaveWorkflow}
-          nodesLength={nodes.length}
-          isSaving={isSaving}
-        />
+        <div className="flex-1 flex flex-col relative min-w-0">
+          {/* Header/Controls */}
+          <Header 
+            workflowId={workflowId}
+            onClearCanvas={() => { 
+              setNodes([]); 
+              setEdges([]); 
+              setMessages([]); // Reset memory when the board is cleared
+              setWorkflowId(null);
+            }}
+            handleSaveWorkflow={handleSaveWorkflow}
+            nodesLength={nodes.length}
+            isSaving={isSaving}
+          />
 
-        {/* The Graph Canvas */}
-        <div className={`flex-1 relative bg-slate-950 flex ${isSplitView ? 'flex-row' : 'flex-col'}`}>
-           <div className={`relative ${isSplitView ? 'flex-1 border-r border-slate-800' : 'h-full w-full'}`}>
-             {isSplitView && (
-               <div className="absolute top-4 left-4 z-10 px-3 py-1 bg-slate-900/80 rounded-lg text-[10px] font-bold text-slate-400 uppercase tracking-widest border border-slate-800">
-                 Current Version
-               </div>
-             )}
-             <ReactFlow
-               nodes={nodes}
-               edges={edges}
-               onNodesChange={onNodesChange}
-               onEdgesChange={onEdgesChange}
-               onConnect={onConnect}
-               onEdgesDelete={onEdgesDelete}
-               nodeTypes={nodeTypes}
-               connectionLineType={ConnectionLineType.SmoothStep}
-               onInit={setRfInstance}
-               minZoom={0.2}
-               maxZoom={1.5}
-               proOptions={{ hideAttribution: true }}
-             >
-               <Background color="#1e293b" gap={24} size={1} />
-               <Controls className="!bg-slate-900 !shadow-2xl !border-slate-800 !rounded-xl overflow-hidden !fill-white" />
-               
-               {!isSplitView && (
-                 <Panel position="top-right" className="bg-slate-900/80 backdrop-blur p-2 rounded-xl border border-slate-800 shadow-2xl">
-                    <div className="flex items-center gap-3">
-                      <div className="w-2 h-2 rounded-full bg-emerald-500" />
-                      <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Auto-Layout: ELK Layered</span>
-                    </div>
-                 </Panel>
-               )}
-             </ReactFlow>
-           </div>
-
-           {isSplitView && (
-             <div className="relative flex-1 bg-slate-900/30">
-                <div className="absolute top-4 left-4 z-10 px-3 py-1 bg-indigo-600/80 rounded-lg text-[10px] font-bold text-white uppercase tracking-widest border border-indigo-500">
-                  Proposed Version
+          {/* The Graph Canvas */}
+          <div className={`flex-1 relative bg-slate-950 flex ${isSplitView ? 'flex-col' : 'flex-col'}`}>
+            <div className={`relative ${isSplitView ? 'flex-1 border-b border-slate-800' : 'h-full w-full'}`}>
+              {isSplitView && (
+                <div className="absolute top-4 left-4 z-10 px-3 py-1 bg-slate-900/80 rounded-lg text-[10px] font-bold text-slate-400 uppercase tracking-widest border border-slate-800">
+                  Current Version
                 </div>
-                <ReactFlow
-                  nodes={proposedNodes}
-                  edges={proposedEdges}
-                  onNodesChange={onProposedNodesChange}
-                  onEdgesChange={onProposedEdgesChange}
-                  nodeTypes={nodeTypes}
-                  connectionLineType={ConnectionLineType.SmoothStep}
-                  minZoom={0.2}
-                  maxZoom={1.5}
-                  proOptions={{ hideAttribution: true }}
-                >
-                  <Background color="#1e293b" gap={24} size={1} />
-                  <Controls className="!bg-slate-900 !shadow-2xl !border-slate-800 !rounded-xl overflow-hidden !fill-white" />
-                </ReactFlow>
+              )}
+              <ReactFlow
+                nodes={nodes}
+                edges={edges}
+                onNodesChange={onNodesChange}
+                onEdgesChange={onEdgesChange}
+                onConnect={onConnect}
+                onEdgesDelete={onEdgesDelete}
+                nodeTypes={nodeTypes}
+                connectionLineType={ConnectionLineType.SmoothStep}
+                onInit={setRfInstance}
+                minZoom={0.2}
+                maxZoom={1.5}
+                proOptions={{ hideAttribution: true }}
+              >
+                <Background color="#1e293b" gap={24} size={1} />
+                <Controls className="!bg-slate-900 !shadow-2xl !border-slate-800 !rounded-xl overflow-hidden !fill-white" />
+                
+                {!isSplitView && (
+                  <Panel position="top-right" className="bg-slate-900/80 backdrop-blur p-2 rounded-xl border border-slate-800 shadow-2xl">
+                      <div className="flex items-center gap-3">
+                        <div className="w-2 h-2 rounded-full bg-emerald-500" />
+                        <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Auto-Layout: ELK Layered</span>
+                      </div>
+                  </Panel>
+                )}
+              </ReactFlow>
+            </div>
 
-                {/* Accept/Reject Overlay */}
-                <div className="absolute bottom-10 left-1/2 -translate-x-1/2 z-50 flex items-center gap-4 bg-slate-900/90 backdrop-blur-xl border border-slate-800 p-4 rounded-2xl shadow-[0_0_50px_rgba(0,0,0,0.5)]">
-                  <div className="flex flex-col gap-1 mr-4">
-                    <span className="text-xs font-bold text-slate-200">Review AI changes?</span>
-                    <span className="text-[10px] text-slate-500">Approving will update the live workspace.</span>
+            {isSplitView && (
+              <div className="relative flex-1 bg-slate-900/10">
+                  <div className="absolute top-4 left-4 z-10 px-3 py-1 bg-indigo-600/80 rounded-lg text-[10px] font-bold text-white uppercase tracking-widest border border-indigo-500">
+                    Proposed Version
                   </div>
-                  <button 
-                    onClick={handleReject}
-                    className="px-5 py-2.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-white text-xs font-bold transition-all border border-slate-700"
+                  <ReactFlow
+                    nodes={proposedNodes}
+                    edges={proposedEdges}
+                    onNodesChange={onProposedNodesChange}
+                    onEdgesChange={onProposedEdgesChange}
+                    nodeTypes={nodeTypes}
+                    connectionLineType={ConnectionLineType.SmoothStep}
+                    minZoom={0.2}
+                    maxZoom={1.5}
+                    proOptions={{ hideAttribution: true }}
                   >
-                    Discard Changes
-                  </button>
-                  <button 
-                    onClick={handleAccept}
-                    className="px-5 py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-bold transition-all shadow-lg shadow-indigo-600/30 flex items-center gap-2"
-                  >
-                    <Sparkles className="w-3.5 h-3.5" />
-                    Apply Updates
-                  </button>
-                </div>
-             </div>
-           )}
+                    <Background color="#1e293b" gap={24} size={1} />
+                    <Controls className="!bg-slate-900 !shadow-2xl !border-slate-800 !rounded-xl overflow-hidden !fill-white" />
+                  </ReactFlow>
 
-           {/* AI Status Overlay - Keep visible while thinking OR while items are still being built in the queue */}
-           <AnimatePresence>
-             {(isArchitectThinking || incomingQueue.filter(i => i.type !== 'node' || !i.data.id?.includes('manual')).length > 0) && (
-               <motion.div 
-                 initial={{ opacity: 0, scale: 0.9 }}
-                 animate={{ opacity: 1, scale: 1 }}
-                 exit={{ opacity: 0, scale: 0.9 }}
-                 className="absolute bottom-32 left-1/2 -translate-x-1/2 z-30 flex items-center gap-3 bg-indigo-600 text-white px-6 py-3 rounded-2xl text-xs font-bold shadow-2xl shadow-indigo-900/40"
-               >
-                 <Sparkles className="w-4 h-4 animate-pulse" />
-                 <span className="tracking-wide">Architect is designing workflow...</span>
-               </motion.div>
-             )}
-           </AnimatePresence>
+                  {/* Accept/Reject Overlay */}
+                  <div className="absolute bottom-10 left-1/2 -translate-x-1/2 z-50 flex items-center gap-4 bg-slate-900/90 backdrop-blur-xl border border-slate-800 p-4 rounded-2xl shadow-[0_0_50px_rgba(0,0,0,0.5)]">
+                    <div className="flex flex-col gap-1 mr-4">
+                      <span className="text-xs font-bold text-slate-200">Review AI changes?</span>
+                      <span className="text-[10px] text-slate-500">Approving will update the live workspace.</span>
+                    </div>
+                    <button 
+                      onClick={handleReject}
+                      className="px-5 py-2.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-white text-xs font-bold transition-all border border-slate-700"
+                    >
+                      Discard Changes
+                    </button>
+                    <button 
+                      onClick={handleAccept}
+                      className="px-5 py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-bold transition-all shadow-lg shadow-indigo-600/30 flex items-center gap-2"
+                    >
+                      <Sparkles className="w-3.5 h-3.5" />
+                      Apply Updates
+                    </button>
+                  </div>
+              </div>
+            )}
+
+            {/* AI Status Overlay - Keep visible while thinking OR while items are still being built in the queue */}
+            <AnimatePresence>
+              {(isArchitectThinking || incomingQueue.filter(i => i.type !== 'node' || !i.data.id?.includes('manual')).length > 0) && (
+                <motion.div 
+                  initial={{ opacity: 0, scale: 0.9 }}
+                  animate={{ opacity: 1, scale: 1 }}
+                  exit={{ opacity: 0, scale: 0.9 }}
+                  className="absolute bottom-10 left-1/2 -translate-x-1/2 z-30 flex items-center gap-3 bg-indigo-600 text-white px-6 py-3 rounded-2xl text-xs font-bold shadow-2xl shadow-indigo-900/40"
+                >
+                  <Sparkles className="w-4 h-4 animate-pulse" />
+                  <span className="tracking-wide">Architect is designing...</span>
+                </motion.div>
+              )}
+            </AnimatePresence>
+          </div>
         </div>
 
-        {/* Command Bar Interface */}
-        <CommandBar 
+        {/* Right Sidebar: Chat Interface */}
+        <ChatBar 
+          messages={messages}
           command={command}
           setCommand={setCommand}
           handleSendCommand={handleSendCommand}
