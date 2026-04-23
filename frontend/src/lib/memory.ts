@@ -12,24 +12,26 @@ export const memoryManager = {
   /**
    * Appends an action log to the history
    */
-  /**
-   * Appends an action log to the history.
-   * If the action is a CURRENT_CANVAS_GRAPH update, it removes all previous 
-   * instances to prevent memory bloat and keep the history clean.
-   */
   logAction: (messages: MemoryMessage[], action: string): MemoryMessage[] => {
     const isGraphSync = action.includes('CURRENT_CANVAS_GRAPH');
     
-    // If we are providing a new state sync, remove old ones to save tokens and avoid confusion
-    const filteredMessages = isGraphSync 
-      ? messages.filter(m => !m.content.includes('CURRENT_CANVAS_GRAPH'))
-      : messages;
+    // We will keep historical syncs but label them to save token focus for the current state.
+    // Instead of filtering, we rename previous syncs to [PAST_SYNC].
+    const updatedMessages = messages.map(m => {
+      if (m.content.includes('CURRENT_CANVAS_GRAPH') && !m.content.includes('[CURRENT_SYNC]')) {
+        return { 
+          ...m, 
+          content: m.content.replace('[SYSTEM_SYNC]', '[PAST_SYNC]') 
+        };
+      }
+      return m;
+    });
 
-    // Avoid double prefixing if the action already contains [SYSTEM_SYNC]
-    const content = action.startsWith('[SYSTEM_SYNC]') ? action : `[SYSTEM_SYNC] ${action}`;
+    const prefix = isGraphSync ? '[CURRENT_SYNC]' : '[SYSTEM_LOG]';
+    const content = `${prefix} ${action.replace('[SYSTEM_SYNC] ', '')}`;
 
     return [
-      ...filteredMessages,
+      ...updatedMessages,
       { role: 'user', content }
     ];
   },
