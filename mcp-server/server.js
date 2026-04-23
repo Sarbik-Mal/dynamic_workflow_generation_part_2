@@ -84,6 +84,22 @@ const NODE_TYPES = {
   error_handler: { label: 'Error Handler', icon: 'AlertTriangle', color: 'slate-800', desc: 'Manages workflow errors' },
 };
 
+// Tool to get information about available nodes
+server.tool(
+  "get_node_info",
+  "Returns a detailed manifest of all available node types that can be used in the workflow. Use this tool whenever you need to know which nodes are available.",
+  {},
+  async () => {
+    console.error("[MCP] get_node_info called by AI");
+    return {
+      content: [{ 
+        type: "text", 
+        text: JSON.stringify(NODE_TYPES, null, 2) 
+      }],
+    };
+  }
+);
+
 // Tool to generate/update the full workflow declaratively
 server.tool(
   "generate_workflow",

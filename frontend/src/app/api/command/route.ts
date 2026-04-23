@@ -1,5 +1,5 @@
 import { ChatOpenAI } from '@langchain/openai';
-import { SystemMessage, HumanMessage, AIMessage, BaseMessage } from '@langchain/core/messages';
+import { SystemMessage, HumanMessage, AIMessage, BaseMessage, ToolMessage } from '@langchain/core/messages';
 import { z } from 'zod';
 import { io, Socket } from 'socket.io-client';
 import { NODE_TYPES } from '@/lib/nodes';
@@ -62,8 +62,9 @@ Your output consists of two main parts:
 - \`[PAST_SYNC]\`: Historical snapshots of what the board looked like at previous steps.
 - **Priority**: Use \`[PAST_SYNC]\` as the source of truth for all "revert" or "undo" requests. Use \`[CURRENT_SYNC]\` for all "add/modify" requests.
 
-### NODES AVAILABLE
-${Object.entries(NODE_TYPES).map(([id, n]) => `- ${id}: ${n.label} - ${n.desc}`).join('\n')}
+### KNOWLEDGE RETRIEVAL
+- **Nodes Library**: You DO NOT have a list of available nodes in your immediate memory. 
+- **Requirement**: Whenever you need to know which node types are available to build or update a workflow, you MUST call the \`get_node_info\` tool. Do not guess or assume node IDs.
 
 ### CONSTRUCTION RULES (within workflow_data)
 1. **Unambiguous Edges**: To connect A to B, add one entry to "edges" with source "A" and target "B".
@@ -99,9 +100,60 @@ You are a perfect graph machine and a helpful assistant. Talk to the user in the
     const model = new ChatOpenAI({
       modelName: 'gpt-4o-mini',
       temperature: 0,
-    }).withStructuredOutput(blueprintSchema);
+    });
 
-    const result = await model.invoke(langChainMessages);
+    const tools = [
+      {
+        type: "function" as const,
+        function: {
+          name: "get_node_info",
+          description: "Returns a detailed manifest of all available node types that can be used in the workflow. Use this tool whenever you need to know which nodes are available.",
+          parameters: {
+            type: "object",
+            properties: {},
+            required: [],
+          },
+        },
+      }
+    ];
+
+    const modelWithTools = model.bindTools(tools);
+    let currentMessages = [...langChainMessages];
+    let toolCallsCount = 0;
+    const MAX_TOOL_CALLS = 3;
+
+    // Loop to handle tool calling for get_node_info
+    while (toolCallsCount < MAX_TOOL_CALLS) {
+      const response = await modelWithTools.invoke(currentMessages);
+      
+      if (response.tool_calls && response.tool_calls.length > 0) {
+        console.log(`[API] AI requested ${response.tool_calls.length} tool calls...`);
+        currentMessages.push(response);
+
+        for (const toolCall of response.tool_calls) {
+          if (toolCall.name === 'get_node_info') {
+            console.log(`[API] Providing node info for call ${toolCall.id}...`);
+            currentMessages.push(new ToolMessage({
+              content: JSON.stringify(NODE_TYPES, null, 2),
+              tool_call_id: toolCall.id!
+            }));
+          } else {
+            // Handle unknown tools just in case
+            currentMessages.push(new ToolMessage({
+              content: "Error: Tool not found.",
+              tool_call_id: toolCall.id!
+            }));
+          }
+        }
+        toolCallsCount++;
+        continue;
+      }
+      break; 
+    }
+
+    // Final call with structured output forcing
+    const structuredModel = model.withStructuredOutput(blueprintSchema);
+    const result = await structuredModel.invoke(currentMessages);
     
     console.log('MASTER ARCHITECT GENERATED RESPONSE:', JSON.stringify(result, null, 2));
 
