@@ -28,12 +28,33 @@ export const ChatBar: React.FC<ChatBarProps> = ({
   const allMessages = assistantMessage ? [...messages, assistantMessage] : messages;
 
   // Filter messages to show only relevant conversational ones
-  const displayMessages = allMessages.filter(m => 
-    !m.content.includes('[CURRENT_SYNC]') && 
-    !m.content.includes('[PAST_SYNC]') &&
-    !m.content.includes('[SYSTEM_LOG]') &&
-    !m.content.includes('[SYSTEM_SYNC]')
-  );
+  const displayMessages = allMessages
+    .filter(m => 
+      !m.content.includes('[CURRENT_SYNC]') && 
+      !m.content.includes('[PAST_SYNC]') &&
+      !m.content.includes('[SYSTEM_LOG]') &&
+      !m.content.includes('[SYSTEM_SYNC]')
+    )
+    .map(m => {
+      // Clean up technical prefixes for the UI
+      if (m.role === 'user') {
+        let cleanContent = m.content;
+        
+        // Strip everything before and including the last "User request:"
+        if (cleanContent.includes('User request:')) {
+          const parts = cleanContent.split('User request:');
+          cleanContent = parts[parts.length - 1].trim();
+        } else {
+          // If no "User request:", it might be only revision requests. 
+          // We strip those bracketed codes too for the UI.
+          cleanContent = cleanContent.replace(/\[NODE_REVISION_REQUEST:.*?\]\s*".*?"/g, '').trim();
+        }
+        
+        return { ...m, content: cleanContent || 'Revision requested' };
+      }
+      return m;
+    })
+    .filter(m => m.content.trim().length > 0);
 
   useEffect(() => {
     if (scrollRef.current) {
