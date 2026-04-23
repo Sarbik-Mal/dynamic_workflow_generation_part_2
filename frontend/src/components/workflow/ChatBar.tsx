@@ -10,6 +10,7 @@ interface ChatBarProps {
   handleSendCommand: (e: React.FormEvent) => void;
   isArchitectThinking: boolean;
   pendingReviews: {id: string, text: string, uuid: string}[];
+  assistantMessage?: MemoryMessage | null;
 }
 
 export const ChatBar: React.FC<ChatBarProps> = ({
@@ -18,13 +19,16 @@ export const ChatBar: React.FC<ChatBarProps> = ({
   setCommand,
   handleSendCommand,
   isArchitectThinking,
-  pendingReviews
+  pendingReviews,
+  assistantMessage
 }) => {
   const scrollRef = useRef<HTMLDivElement>(null);
 
+  // Combine regular messages and the pending assistant message
+  const allMessages = assistantMessage ? [...messages, assistantMessage] : messages;
+
   // Filter messages to show only relevant conversational ones
-  // We hide system syncs and internal logs from the user view
-  const displayMessages = messages.filter(m => 
+  const displayMessages = allMessages.filter(m => 
     !m.content.includes('[CURRENT_SYNC]') && 
     !m.content.includes('[PAST_SYNC]') &&
     !m.content.includes('[SYSTEM_LOG]') &&

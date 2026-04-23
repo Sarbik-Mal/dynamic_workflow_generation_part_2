@@ -47,7 +47,6 @@ export default function WorkflowVisualizer() {
   const [isSplitView, setIsSplitView] = useState(false);
   const [proposedNodes, setProposedNodes, onProposedNodesChange] = useNodesState<Node>([]);
   const [proposedEdges, setProposedEdges, onProposedEdgesChange] = useEdgesState<Edge>([]);
-  const [pendingMessages, setPendingMessages] = useState<MemoryMessage[]>([]);
   const [assistantMessage, setAssistantMessage] = useState<MemoryMessage | null>(null);
   
   const socketRef = useRef<Socket | null>(null);
@@ -458,18 +457,31 @@ export default function WorkflowVisualizer() {
     setNodes(proposedNodes);
     setEdges(proposedEdges);
     if (assistantMessage) {
-      setMessages([...pendingMessages, assistantMessage]);
+      setMessages(prev => [...prev, assistantMessage]);
     }
     setIsSplitView(false);
-    setPendingMessages([]);
     setAssistantMessage(null);
   };
 
   const handleReject = () => {
     setIsSplitView(false);
+    if (assistantMessage) {
+      // 1. Permanently record the AI's proposal and the fact it was rejected (for AI memory)
+      // 2. Add a proactive follow-up for the user to see immediately
+      setMessages(prev => {
+        const rejectedLog = memoryManager.logAction([assistantMessage], memoryManager.formatRejectAction());
+        return [
+          ...prev, 
+          ...rejectedLog,
+          { 
+            role: 'assistant', 
+            content: 'Understood. Let\'s pivot. Would you like me to suggest a more simplified approach, or should we refine the data-processing steps? I can also focus on adding more robust error handling if that\'s a priority.' 
+          }
+        ];
+      });
+    }
     setProposedNodes([]);
     setProposedEdges([]);
-    setPendingMessages([]);
     setAssistantMessage(null);
   };
 
@@ -500,15 +512,18 @@ export default function WorkflowVisualizer() {
       edges: edges.map(e => ({ source: e.source, target: e.target }))
     };
     
+    // 1. Sync state (not shown in UI)
     const messagesWithSync = memoryManager.logAction(messages, memoryManager.formatCurrentState(currentBlueprint));
 
-    // Optimistically append the aggregated message
-    const newMessages: MemoryMessage[] = [...messagesWithSync, { role: 'user', content: aggregatedPrompt.trim() }];
-    setPendingMessages(newMessages);
+    // 2. Add User Message to UI History
+    const userMsg: MemoryMessage = { role: 'user', content: aggregatedPrompt.trim() };
+    setMessages(prev => [...prev, userMsg]);
 
-    // Clear the pending queue immediately
+    // 3. Prepare full payload for AI
+    const apiMessages = [...messagesWithSync, userMsg];
+
+    // Clear UI state for next input
     setPendingReviews([]);
-    // Clear the node visual labels
     setNodes(prev => prev.map(n => ({ ...n, data: { ...n.data, reviews: [] } })));
 
     try {
@@ -516,7 +531,7 @@ export default function WorkflowVisualizer() {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ 
-          messages: newMessages 
+          messages: apiMessages 
         }),
       });
       
@@ -524,18 +539,16 @@ export default function WorkflowVisualizer() {
         const data = await res.json();
         const aiMessage: MemoryMessage = { 
           role: 'assistant', 
-          content: data.message // Use the conversational message from the agent
+          content: data.message 
         };
 
-        setAssistantMessage(aiMessage);
-        
-        // Only show preview if there is blueprint data
         if (data.blueprint && data.blueprint.nodes && data.blueprint.nodes.length > 0) {
+          setAssistantMessage(aiMessage);
           setIsSplitView(true);
           reconcilePreviewWorkflow(data.blueprint);
         } else {
-          // If no blueprint, just commit the message to history immediately
-          setMessages([...newMessages, aiMessage]);
+          setMessages(prev => [...prev, aiMessage]);
+          setAssistantMessage(null);
         }
       }
     } catch (error) {
@@ -736,9 +749,9 @@ export default function WorkflowVisualizer() {
               </div>
             )}
 
-            {/* AI Status Overlay - Keep visible while thinking OR while items are still being built in the queue */}
+            {/* AI Status Overlay - Show when items are in queue OR we are in split view preview */}
             <AnimatePresence>
-              {(isArchitectThinking || incomingQueue.filter(i => i.type !== 'node' || !i.data.id?.includes('manual')).length > 0) && (
+              {(isSplitView || incomingQueue.filter(i => i.type !== 'node' || !i.data.id?.includes('manual')).length > 0) && (
                 <motion.div 
                   initial={{ opacity: 0, scale: 0.9 }}
                   animate={{ opacity: 1, scale: 1 }}
@@ -746,7 +759,9 @@ export default function WorkflowVisualizer() {
                   className="absolute bottom-10 left-1/2 -translate-x-1/2 z-30 flex items-center gap-3 bg-indigo-600 text-white px-6 py-3 rounded-2xl text-xs font-bold shadow-2xl shadow-indigo-900/40"
                 >
                   <Sparkles className="w-4 h-4 animate-pulse" />
-                  <span className="tracking-wide">Architect is designing...</span>
+                  <span className="tracking-wide">
+                    {isSplitView ? 'Architect has proposed updates...' : 'Architect is designing workflow...'}
+                  </span>
                 </motion.div>
               )}
             </AnimatePresence>
@@ -761,6 +776,7 @@ export default function WorkflowVisualizer() {
           handleSendCommand={handleSendCommand}
           isArchitectThinking={isArchitectThinking}
           pendingReviews={pendingReviews}
+          assistantMessage={assistantMessage}
         />
       </main>
     </div>

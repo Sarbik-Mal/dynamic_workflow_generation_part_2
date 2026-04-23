@@ -69,5 +69,11 @@ export const memoryManager = {
    */
   formatCurrentState: (blueprint: any): string => {
     return `[SYSTEM_SYNC] CURRENT_CANVAS_GRAPH: ${JSON.stringify(blueprint)}. This is the absolute ground truth of what is currently visible to the user.`;
+  },
+  /**
+   * Formats a workflow rejection action
+   */
+  formatRejectAction: (): string => {
+    return `User explicitly REJECTED and DISCARDED the last proposed workflow update. Please apologize and suggest alternative changes or a different approach to solve their request.`;
   }
 };
