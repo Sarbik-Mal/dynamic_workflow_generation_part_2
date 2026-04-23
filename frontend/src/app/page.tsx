@@ -405,10 +405,12 @@ export default function WorkflowVisualizer() {
     try {
       const nodeLibrary = new Map<string, Node>();
       
-      // Use proposedNodes to preserve reviews if needed, but usually it's fresh
       blueprint.nodes.forEach(type => {
         const nodeInfo = NODE_TYPES[type as keyof typeof NODE_TYPES];
         if (!nodeInfo) return;
+
+        // Preserve any pending reviews for this node
+        const nodeReviews = pendingReviews.filter(r => r.id === type);
 
         nodeLibrary.set(type, {
           id: type,
@@ -419,7 +421,7 @@ export default function WorkflowVisualizer() {
             description: nodeInfo.desc,
             icon: nodeInfo.icon,
             color: nodeInfo.color,
-            reviews: []
+            reviews: nodeReviews
           }
         });
       });
@@ -451,11 +453,21 @@ export default function WorkflowVisualizer() {
     } catch (error) {
       console.error('[Preview] Reconciliation failed:', error);
     }
-  }, []);
+  }, [pendingReviews]);
 
   const handleAccept = () => {
-    setNodes(proposedNodes);
+    // Clear all temporary review notes when accepting the version
+    const cleanNodes = proposedNodes.map(node => ({
+      ...node,
+      data: {
+        ...node.data,
+        reviews: []
+      }
+    }));
+
+    setNodes(cleanNodes);
     setEdges(proposedEdges);
+    
     if (assistantMessage) {
       setMessages(prev => [...prev, assistantMessage]);
     }
@@ -507,13 +519,19 @@ export default function WorkflowVisualizer() {
     }
 
     // SYNC: Inject the absolute source of truth (current JSON Blueprint) 
-    const currentBlueprint = {
+    // Prepare state sync
+    const currentBlueprint = isSplitView ? {
+      nodes: proposedNodes.map(n => ({ id: n.id, reviews: n.data.reviews || [] })),
+      edges: proposedEdges.map(e => ({ source: e.source, target: e.target }))
+    } : {
       nodes: nodes.map(n => ({ id: n.id, reviews: n.data.reviews || [] })),
       edges: edges.map(e => ({ source: e.source, target: e.target }))
     };
     
     // 1. Sync state (not shown in UI)
-    const messagesWithSync = memoryManager.logAction(messages, memoryManager.formatCurrentState(currentBlueprint));
+    // We replace the default [SYSTEM_SYNC] with a specific tag for clarity
+    const syncData = memoryManager.formatCurrentState(currentBlueprint).replace('[SYSTEM_SYNC]', isSplitView ? '[PROPOSAL_SYNC]' : '[CURRENT_SYNC]');
+    const messagesWithSync = memoryManager.logAction(messages, syncData);
 
     // 2. Add User Message to UI History
     const userMsg: MemoryMessage = { role: 'user', content: aggregatedPrompt.trim() };
