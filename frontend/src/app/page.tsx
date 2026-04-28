@@ -106,10 +106,10 @@ export default function WorkflowVisualizer() {
     };
 
     const handleManualSubmitReview = (e: any) => {
-      const { id, feedback } = e.detail;
+      const { id, feedback, isProposed } = e.detail;
       const uuid = window.crypto.randomUUID();
       
-      setNodes((prevNodes) => prevNodes.map(node => {
+      const updateNodes = (prevNodes: Node[]) => prevNodes.map(node => {
         if (node.id === id) {
           const reviews = (node.data?.reviews || []) as any[];
           return {
@@ -118,16 +118,23 @@ export default function WorkflowVisualizer() {
           };
         }
         return node;
-      }));
+      });
+
+      if (isProposed) {
+        setProposedNodes(updateNodes);
+      } else {
+        setNodes(updateNodes);
+      }
 
       // Add to pending reviews queue instead of immediate submit
       setPendingReviews(prev => [...prev, { id, text: feedback, uuid }]);
     };
 
     const handleEditNodeReview = (e: any) => {
-      const { id, uuid, newText } = e.detail;
+      const { id, uuid, newText, isProposed } = e.detail;
       setPendingReviews(prev => prev.map(p => p.uuid === uuid ? { ...p, text: newText } : p));
-      setNodes(prev => prev.map(n => {
+      
+      const updateNodes = (prevNodes: Node[]) => prevNodes.map(n => {
         if (n.id === id) {
           return {
             ...n,
@@ -135,13 +142,20 @@ export default function WorkflowVisualizer() {
           };
         }
         return n;
-      }));
+      });
+
+      if (isProposed) {
+        setProposedNodes(updateNodes);
+      } else {
+        setNodes(updateNodes);
+      }
     };
 
     const handleDeleteNodeReview = (e: any) => {
-      const { id, uuid } = e.detail;
+      const { id, uuid, isProposed } = e.detail;
       setPendingReviews(prev => prev.filter(p => p.uuid !== uuid));
-      setNodes(prev => prev.map(n => {
+      
+      const updateNodes = (prevNodes: Node[]) => prevNodes.map(n => {
         if (n.id === id) {
           return {
             ...n,
@@ -149,7 +163,13 @@ export default function WorkflowVisualizer() {
           };
         }
         return n;
-      }));
+      });
+
+      if (isProposed) {
+        setProposedNodes(updateNodes);
+      } else {
+        setNodes(updateNodes);
+      }
     };
 
     window.addEventListener('UI_ACTION:REMOVE_NODE' as any, handleManualRemoveNode);
@@ -340,7 +360,8 @@ export default function WorkflowVisualizer() {
             description: nodeInfo.desc,
             icon: nodeInfo.icon,
             color: nodeInfo.color,
-            reviews: existingReviews
+            reviews: existingReviews,
+            isProposed: false
           }
         });
       });
@@ -397,9 +418,9 @@ export default function WorkflowVisualizer() {
     } finally {
       setIsArchitectThinking(false);
     }
-  }, [setEdges, setNodes, ensureWorkflowId]); 
+  }, [setEdges, setNodes, ensureWorkflowId]);
 
-  const reconcilePreviewWorkflow = useCallback(async (blueprint: { nodes: string[], edges: {source: string, target: string}[] }) => {
+  const reconcilePreviewWorkflow = useCallback(async (blueprint: { nodes: string[], edges: {source: string, target: string}[] }, reviewsToPreserve?: any[]) => {
     if (!blueprint || !blueprint.nodes) return;
 
     try {
@@ -410,7 +431,8 @@ export default function WorkflowVisualizer() {
         if (!nodeInfo) return;
 
         // Preserve any pending reviews for this node
-        const nodeReviews = pendingReviews.filter(r => r.id === type);
+        const activeReviews = reviewsToPreserve || pendingReviews;
+        const nodeReviews = activeReviews.filter(r => r.id === type);
 
         nodeLibrary.set(type, {
           id: type,
@@ -421,7 +443,8 @@ export default function WorkflowVisualizer() {
             description: nodeInfo.desc,
             icon: nodeInfo.icon,
             color: nodeInfo.color,
-            reviews: nodeReviews
+            reviews: nodeReviews,
+            isProposed: true
           }
         });
       });
@@ -461,7 +484,8 @@ export default function WorkflowVisualizer() {
       ...node,
       data: {
         ...node.data,
-        reviews: []
+        reviews: [],
+        isProposed: false
       }
     }));
 
@@ -518,6 +542,8 @@ export default function WorkflowVisualizer() {
        aggregatedPrompt += `\nUser request:\n${text}`;
     }
 
+    const currentReviews = [...pendingReviews];
+
     // SYNC: Inject the absolute source of truth (current JSON Blueprint) 
     // Prepare state sync
     const currentBlueprint = isSplitView ? {
@@ -543,6 +569,7 @@ export default function WorkflowVisualizer() {
     // Clear UI state for next input
     setPendingReviews([]);
     setNodes(prev => prev.map(n => ({ ...n, data: { ...n.data, reviews: [] } })));
+    setProposedNodes(prev => prev.map(n => ({ ...n, data: { ...n.data, reviews: [] } })));
 
     try {
       const res = await fetch('/api/command', {
@@ -639,7 +666,8 @@ export default function WorkflowVisualizer() {
           label: nodeInfo.label,
           description: nodeInfo.desc,
           icon: nodeInfo.icon,
-          color: nodeInfo.color // Restore color in manual addition
+          color: nodeInfo.color,
+          isProposed: false
         }
       }
     }]);

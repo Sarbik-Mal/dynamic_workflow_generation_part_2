@@ -15,7 +15,7 @@ export const WorkflowNode = ({ data, id }: any) => {
     if (!reviewText.trim()) return;
     
     window.dispatchEvent(new CustomEvent('UI_ACTION:SUBMIT_NODE_REVIEW', { 
-      detail: { id, feedback: reviewText.trim() } 
+      detail: { id, feedback: reviewText.trim(), isProposed: !!data.isProposed } 
     }));
     
     setReviewText('');
@@ -63,7 +63,7 @@ export const WorkflowNode = ({ data, id }: any) => {
                     value={review.text}
                     onChange={(e) => {
                       window.dispatchEvent(new CustomEvent('UI_ACTION:EDIT_NODE_REVIEW', { 
-                        detail: { id, uuid: review.uuid, newText: e.target.value } 
+                        detail: { id, uuid: review.uuid, newText: e.target.value, isProposed: !!data.isProposed } 
                       }));
                     }}
                     onKeyDown={(e) => {
@@ -85,7 +85,7 @@ export const WorkflowNode = ({ data, id }: any) => {
                 <button 
                   onClick={(e) => {
                     e.stopPropagation();
-                    window.dispatchEvent(new CustomEvent('UI_ACTION:DELETE_NODE_REVIEW', { detail: { id, uuid: review.uuid } }));
+                    window.dispatchEvent(new CustomEvent('UI_ACTION:DELETE_NODE_REVIEW', { detail: { id, uuid: review.uuid, isProposed: !!data.isProposed } }));
                   }}
                   className="hover:text-red-400 text-slate-400 transition-colors shrink-0 ml-1 p-0.5 nodrag bg-slate-800/50 rounded-md"
                 >
